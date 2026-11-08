@@ -29,39 +29,42 @@ function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   )
 }
 
-// 1. Define the default prayers
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
+const STATUSES = ['on_time', 'late', 'qadha', 'missed'] as const
+
+// Update the type to hold both status and time
+type PrayerRecord = { status: string, prayed_at?: string | null }
 
 export default function Dashboard() {
   const { user } = useAuth()
   
-  // 2. State to hold the real data from the database
-  const [records, setRecords] = useState<Record<string, string>>({})
+  const [records, setRecords] = useState<Record<string, PrayerRecord>>({})
   const [loading, setLoading] = useState(true)
+  
+  const [selectedPrayer, setSelectedPrayer] = useState<string | null>(null)
+  const [selectedStatus, setSelectedStatus] = useState<string>('on_time')
+  const [prayerTime, setPrayerTime] = useState<string>('')
+  const [isSaving, setIsSaving] = useState(false)
 
-  // Get today's date in YYYY-MM-DD format (local time)
-  const today = new Date().toLocaleDateString('en-CA') // en-CA gives YYYY-MM-DD
+  // en-CA gives YYYY-MM-DD
+  const today = new Date().toLocaleDateString('en-CA')
 
-  // 3. Fetch the data from Supabase
   useEffect(() => {
     async function fetchPrayers() {
       if (!user) return
 
+      // Fetch the time as well as the status
       const { data, error } = await supabase
         .from('prayer_records')
-        .select('prayer_name, status')
+        .select('prayer_name, status, prayed_at')
         .eq('user_id', user.id)
         .eq('prayer_date', today)
 
-      if (error) {
-        console.error('Error fetching prayers:', error)
-      } else if (data) {
-        // Convert array of records to an object for easy lookup: { fajr: 'on_time', asr: 'missed' }
+      if (!error && data) {
         const mappedData = data.reduce((acc, row) => {
-          acc[row.prayer_name] = row.status
+          acc[row.prayer_name] = { status: row.status, prayed_at: row.prayed_at }
           return acc
-        }, {} as Record<string, string>)
-        
+        }, {} as Record<string, PrayerRecord>)
         setRecords(mappedData)
       }
       setLoading(false)
@@ -70,49 +73,81 @@ export default function Dashboard() {
     fetchPrayers()
   }, [user, today])
 
-  // 4. Function to log a prayer (Upsert)
-  const handleLogPrayer = async (prayerName: string) => {
-    if (!user) return
-
-    // For now, we cycle through statuses on click.
-    // Later, we will make a proper modal for this.
-    const currentStatus = records[prayerName] || 'empty'
-    let nextStatus: string | null = null
+  const openModal = (prayerName: string) => {
+    setSelectedPrayer(prayerName)
+    const existing = records[prayerName]
     
-    if (currentStatus === 'empty') nextStatus = 'on_time'
-    else if (currentStatus === 'on_time') nextStatus = 'late'
-    else if (currentStatus === 'late') nextStatus = 'qadha'
-    else if (currentStatus === 'qadha') nextStatus = 'missed'
-    else nextStatus = null // Clear record
-
-    if (nextStatus === null) {
-      // Delete record
-      await supabase.from('prayer_records')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('prayer_date', today)
-        .eq('prayer_name', prayerName)
-      
-      const newRecords = { ...records }
-      delete newRecords[prayerName]
-      setRecords(newRecords)
+    setSelectedStatus(existing?.status || 'on_time')
+    
+    // If there is a saved time, format it to HH:mm for the input
+    if (existing?.prayed_at) {
+      const date = new Date(existing.prayed_at)
+      const hours = String(date.getHours()).padStart(2, '0')
+      const minutes = String(date.getMinutes()).padStart(2, '0')
+      setPrayerTime(`${hours}:${minutes}`)
     } else {
-      // Insert or update record
-      await supabase.from('prayer_records')
-        .upsert({ 
-          user_id: user.id, 
-          prayer_date: today, 
-          prayer_name: prayerName, 
-          status: nextStatus,
-          prayed_at: new Date().toISOString()
-        }, { onConflict: 'user_id,prayer_date,prayer_name' })
-      
-      setRecords({ ...records, [prayerName]: nextStatus })
+      // Otherwise default to current time
+      const now = new Date()
+      const hours = String(now.getHours()).padStart(2, '0')
+      const minutes = String(now.getMinutes()).padStart(2, '0')
+      setPrayerTime(`${hours}:${minutes}`)
     }
   }
 
+  const savePrayer = async () => {
+    if (!user || !selectedPrayer) return
+    setIsSaving(true)
+
+    // Combine the date (today) and the selected time (HH:mm) into an ISO string
+    const dateTimeString = `${today}T${prayerTime}:00`
+    const isoString = new Date(dateTimeString).toISOString()
+
+    const { error } = await supabase.from('prayer_records').upsert({ 
+      user_id: user.id, 
+      prayer_date: today, 
+      prayer_name: selectedPrayer, 
+      status: selectedStatus,
+      prayed_at: isoString
+    }, { onConflict: 'user_id,prayer_date,prayer_name' })
+
+    if (!error) {
+      setRecords({ 
+        ...records, 
+        [selectedPrayer]: { status: selectedStatus, prayed_at: isoString } 
+      })
+      setSelectedPrayer(null) 
+    } else {
+      console.error(error)
+    }
+    setIsSaving(false)
+  }
+
+  const clearPrayer = async () => {
+    if (!user || !selectedPrayer) return
+    setIsSaving(true)
+
+    await supabase.from('prayer_records')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('prayer_date', today)
+      .eq('prayer_name', selectedPrayer)
+    
+    const newRecords = { ...records }
+    delete newRecords[selectedPrayer]
+    setRecords(newRecords)
+    setSelectedPrayer(null)
+    setIsSaving(false)
+  }
+
+  // Helper to format ISO time to HH:mm for the dashboard list
+  const formatTime = (isoString?: string | null) => {
+    if (!isoString) return '--:--'
+    const date = new Date(isoString)
+    return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+  }
+
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8">
+    <div className="mx-auto max-w-[1120px] px-6 py-8 relative">
       <header className="flex items-center justify-between border-b border-[var(--line)] pb-4">
         <Wordmark />
         <div className="flex items-center gap-4">
@@ -140,13 +175,14 @@ export default function Dashboard() {
           ) : (
             <div className="flex flex-col">
               {PRAYERS.map((prayer) => {
-                const status = records[prayer] || 'empty'
-                const time = '--:--' // We will replace this with real times in the next milestone
-
+                const record = records[prayer]
+                const status = record?.status || 'empty'
+                const time = formatTime(record?.prayed_at)
+                
                 return (
                   <div 
                     key={prayer} 
-                    onClick={() => handleLogPrayer(prayer)}
+                    onClick={() => openModal(prayer)}
                     className="group flex items-center gap-6 border-b border-[var(--line)] py-4 hover:bg-[var(--surface)] transition-colors cursor-pointer px-2 -mx-2"
                   >
                     <span className="font-mono text-sm text-[var(--ink-2)] w-12">
@@ -157,9 +193,7 @@ export default function Dashboard() {
                       <span style={{ color: status !== 'empty' ? `var(--st-${status.replace('_', '-')})` : 'var(--ink-2)' }}>
                         <PrayerMarker name={prayer} active={status !== 'empty'} />
                       </span>
-                      <span className="font-display text-lg capitalize">
-                        {prayer}
-                      </span>
+                      <span className="font-display text-lg capitalize">{prayer}</span>
                     </div>
 
                     <div className="ml-auto text-right">
@@ -168,10 +202,7 @@ export default function Dashboard() {
                           NOT LOGGED
                         </span>
                       ) : (
-                        <span 
-                          className="kicker" 
-                          style={{ color: `var(--st-${status.replace('_', '-')})` }}
-                        >
+                        <span className="kicker" style={{ color: `var(--st-${status.replace('_', '-')})` }}>
                           {status.replace('_', ' ').toUpperCase()}
                         </span>
                       )}
@@ -200,11 +231,83 @@ export default function Dashboard() {
           <div className="bg-[var(--surface)] p-4 border border-[var(--line)]">
             <p className="kicker mb-2">HOW TO LOG</p>
             <p className="text-sm mb-3">
-              Click a prayer to cycle its status: On Time → Late → Qadha → Missed → Clear.
+              Tap any prayer to record its status and the time you prayed.
             </p>
           </div>
         </aside>
       </main>
+
+      {selectedPrayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="bg-[var(--paper)] w-full max-w-md border border-[var(--line-strong)] shadow-2xl p-6 sm:p-8">
+            
+            <div className="flex justify-between items-start mb-8">
+              <div>
+                <p className="kicker text-[var(--ink-2)] mb-1">LOG PRAYER</p>
+                <h2 className="font-display text-3xl font-normal capitalize">{selectedPrayer}</h2>
+              </div>
+              <button 
+                onClick={() => setSelectedPrayer(null)}
+                className="kicker hover:text-[var(--ink)] text-[var(--ink-2)] transition-colors"
+              >
+                CANCEL
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <label className="kicker mb-3 block">Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {STATUSES.map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => setSelectedStatus(status)}
+                    className={`border p-3 text-sm font-mono uppercase tracking-wider text-left transition-colors ${
+                      selectedStatus === status 
+                        ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]' 
+                        : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:border-[var(--line-strong)]'
+                    }`}
+                  >
+                    {status.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-8">
+              <label className="kicker mb-2 block" htmlFor="time">Actual Time Prayed</label>
+              <input
+                id="time"
+                type="time"
+                value={prayerTime}
+                onChange={(e) => setPrayerTime(e.target.value)}
+                className="w-full border border-[var(--line)] bg-[var(--surface)] px-3 py-3 text-lg font-mono text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)] transition-all"
+              />
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={savePrayer}
+                disabled={isSaving}
+                className="w-full border border-[var(--accent)] bg-[var(--accent)] px-4 py-4 font-mono uppercase tracking-widest text-sm text-[var(--accent-ink)] transition-all hover:-translate-y-0.5 hover:opacity-95 active:translate-y-0 disabled:opacity-50"
+              >
+                {isSaving ? 'SAVING...' : 'SAVE RECORD'}
+              </button>
+              
+              {records[selectedPrayer] && (
+                <button
+                  onClick={clearPrayer}
+                  disabled={isSaving}
+                  className="w-full border border-transparent px-4 py-3 font-mono uppercase tracking-widest text-xs text-[var(--st-missed)] hover:bg-[var(--st-missed)]/10 transition-colors disabled:opacity-50"
+                >
+                  CLEAR RECORD
+                </button>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
