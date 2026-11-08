@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --paper:       #F4F1EA;
+  --paper:       #F9F6F0; 
   --surface:     #FCFAF5;
-  --ink:         #16181B;
-  --ink-2:       #4A4F55;
-  --line:        #DFD9CC;
+  --ink:         #1A202C; 
+  --ink-2:       #718096; 
+  --line:        #E2DCD0;
   --line-strong: #C4BCAC;
 
-  --st-on-time:  #1E4038;
+  --st-on-time:  #1C3F34; 
   --st-late:     #A8823F;
   --st-qadha:    #3F5A72;
   --st-missed:   #7B2D2A;
   --st-empty:    #B9B1A1;
 
-  --accent:      #1E4038;
-  --accent-ink:  #F4F1EA;
+  --accent:      #1C3F34;
+  --accent-ink:  #F9F6F0;
 
   --font-display: 'Fraunces', Georgia, serif;
   --font-ui:      'Schibsted Grotesk', system-ui, sans-serif;
@@ -69,6 +69,8 @@
 @layer utilities {
   .font-display { font-family: var(--font-display); }
   .font-mono    { font-family: var(--font-mono); }
+  .font-arabic  { font-family: 'Amiri', serif; }
+  
   .kicker {
     font-family: var(--font-mono);
     font-size: 0.75rem;
