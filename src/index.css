@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --paper:       #F4F1EA;
+  --surface:     #FCFAF5;
+  --ink:         #16181B;
+  --ink-2:       #4A4F55;
+  --line:        #DFD9CC;
+  --line-strong: #C4BCAC;
+
+  --st-on-time:  #1E4038;
+  --st-late:     #A8823F;
+  --st-qadha:    #3F5A72;
+  --st-missed:   #7B2D2A;
+  --st-empty:    #B9B1A1;
+
+  --accent:      #1E4038;
+  --accent-ink:  #F4F1EA;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-ui:      'Schibsted Grotesk', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
+}
+
+[data-theme="dark"] {
+  --paper:       #0B0E12;
+  --surface:     #161B22;
+  --ink:         #E8E4DA;
+  --ink-2:       #9AA0A6;
+  --line:        #232A33;
+  --line-strong: #333C48;
+
+  --st-on-time:  #6FA08C;
+  --st-late:     #D4AF6A;
+  --st-qadha:    #7FA0C0;
+  --st-missed:   #B4655F;
+  --st-empty:    #4B5560;
+
+  --accent:      #D4AF6A;
+  --accent-ink:  #0B0E12;
+}
+
+@layer base {
+  html {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    line-height: 1.5;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-mono    { font-family: var(--font-mono); }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .rule {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 0;
+  }
+}
