@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { getPrayerTimes } from '../lib/al_adhan'
 
 function Wordmark({ size = 28 }: { size?: number }) {
   return (
@@ -32,13 +33,14 @@ function PrayerMarker({ name, active }: { name: string; active: boolean }) {
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 const STATUSES = ['on_time', 'late', 'qadha', 'missed'] as const
 
-// Update the type to hold both status and time
 type PrayerRecord = { status: string, prayed_at?: string | null }
+type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
 
 export default function Dashboard() {
   const { user } = useAuth()
   
   const [records, setRecords] = useState<Record<string, PrayerRecord>>({})
+  const [times, setTimes] = useState<PrayerTimes | null>(null)
   const [loading, setLoading] = useState(true)
   
   const [selectedPrayer, setSelectedPrayer] = useState<string | null>(null)
@@ -46,19 +48,20 @@ export default function Dashboard() {
   const [prayerTime, setPrayerTime] = useState<string>('')
   const [isSaving, setIsSaving] = useState(false)
 
-  // en-CA gives YYYY-MM-DD
-  const today = new Date().toLocaleDateString('en-CA')
+  const today = new Date()
+  const todayStr = today.toLocaleDateString('en-CA')
 
+  // Fetch records AND calculate prayer times based on location
   useEffect(() => {
-    async function fetchPrayers() {
+    async function loadData() {
       if (!user) return
 
-      // Fetch the time as well as the status
+      // 1. Fetch saved records
       const { data, error } = await supabase
         .from('prayer_records')
         .select('prayer_name, status, prayed_at')
         .eq('user_id', user.id)
-        .eq('prayer_date', today)
+        .eq('prayer_date', todayStr)
 
       if (!error && data) {
         const mappedData = data.reduce((acc, row) => {
@@ -67,30 +70,44 @@ export default function Dashboard() {
         }, {} as Record<string, PrayerRecord>)
         setRecords(mappedData)
       }
-      setLoading(false)
+
+      // 2. Fetch prayer times using Geolocation
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            const { latitude, longitude } = position.coords
+            const fetchedTimes = await getPrayerTimes(latitude, longitude, today)
+            if (fetchedTimes) setTimes(fetchedTimes)
+            setLoading(false)
+          },
+          // Fallback if user denies location (Default: Mumbai coordinates)
+          async (err) => {
+            console.warn('Location denied. Using fallback coordinates.', err)
+            const fallbackTimes = await getPrayerTimes(19.0760, 72.8777, today)
+            if (fallbackTimes) setTimes(fallbackTimes)
+            setLoading(false)
+          }
+        )
+      } else {
+        setLoading(false)
+      }
     }
 
-    fetchPrayers()
-  }, [user, today])
+    loadData()
+  }, [user, todayStr])
 
   const openModal = (prayerName: string) => {
     setSelectedPrayer(prayerName)
     const existing = records[prayerName]
-    
     setSelectedStatus(existing?.status || 'on_time')
     
-    // If there is a saved time, format it to HH:mm for the input
     if (existing?.prayed_at) {
       const date = new Date(existing.prayed_at)
-      const hours = String(date.getHours()).padStart(2, '0')
-      const minutes = String(date.getMinutes()).padStart(2, '0')
-      setPrayerTime(`${hours}:${minutes}`)
+      setPrayerTime(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`)
     } else {
-      // Otherwise default to current time
-      const now = new Date()
-      const hours = String(now.getHours()).padStart(2, '0')
-      const minutes = String(now.getMinutes()).padStart(2, '0')
-      setPrayerTime(`${hours}:${minutes}`)
+      // If empty, pre-fill with the scheduled time for that prayer
+      const scheduledTime = times ? times[prayerName as keyof PrayerTimes] : '12:00'
+      setPrayerTime(scheduledTime)
     }
   }
 
@@ -98,26 +115,20 @@ export default function Dashboard() {
     if (!user || !selectedPrayer) return
     setIsSaving(true)
 
-    // Combine the date (today) and the selected time (HH:mm) into an ISO string
-    const dateTimeString = `${today}T${prayerTime}:00`
+    const dateTimeString = `${todayStr}T${prayerTime}:00`
     const isoString = new Date(dateTimeString).toISOString()
 
     const { error } = await supabase.from('prayer_records').upsert({ 
       user_id: user.id, 
-      prayer_date: today, 
+      prayer_date: todayStr, 
       prayer_name: selectedPrayer, 
       status: selectedStatus,
       prayed_at: isoString
     }, { onConflict: 'user_id,prayer_date,prayer_name' })
 
     if (!error) {
-      setRecords({ 
-        ...records, 
-        [selectedPrayer]: { status: selectedStatus, prayed_at: isoString } 
-      })
+      setRecords({ ...records, [selectedPrayer]: { status: selectedStatus, prayed_at: isoString } })
       setSelectedPrayer(null) 
-    } else {
-      console.error(error)
     }
     setIsSaving(false)
   }
@@ -125,13 +136,7 @@ export default function Dashboard() {
   const clearPrayer = async () => {
     if (!user || !selectedPrayer) return
     setIsSaving(true)
-
-    await supabase.from('prayer_records')
-      .delete()
-      .eq('user_id', user.id)
-      .eq('prayer_date', today)
-      .eq('prayer_name', selectedPrayer)
-    
+    await supabase.from('prayer_records').delete().eq('user_id', user.id).eq('prayer_date', todayStr).eq('prayer_name', selectedPrayer)
     const newRecords = { ...records }
     delete newRecords[selectedPrayer]
     setRecords(newRecords)
@@ -139,9 +144,8 @@ export default function Dashboard() {
     setIsSaving(false)
   }
 
-  // Helper to format ISO time to HH:mm for the dashboard list
   const formatTime = (isoString?: string | null) => {
-    if (!isoString) return '--:--'
+    if (!isoString) return null
     const date = new Date(isoString)
     return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
   }
@@ -166,18 +170,20 @@ export default function Dashboard() {
           <div className="mb-8">
             <p className="kicker mb-2">TODAY</p>
             <h1 className="font-display m-0 text-4xl font-normal">
-              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              {today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </h1>
           </div>
 
           {loading ? (
-            <p className="font-mono text-sm text-[var(--ink-2)]">FETCHING RECORDS...</p>
+            <p className="font-mono text-sm text-[var(--ink-2)]">CALCULATING TIMES...</p>
           ) : (
             <div className="flex flex-col">
               {PRAYERS.map((prayer) => {
                 const record = records[prayer]
                 const status = record?.status || 'empty'
-                const time = formatTime(record?.prayed_at)
+                
+                // The left side shows the logged time if it exists, otherwise the scheduled time
+                const displayTime = formatTime(record?.prayed_at) || (times ? times[prayer as keyof PrayerTimes] : '--:--')
                 
                 return (
                   <div 
@@ -185,8 +191,8 @@ export default function Dashboard() {
                     onClick={() => openModal(prayer)}
                     className="group flex items-center gap-6 border-b border-[var(--line)] py-4 hover:bg-[var(--surface)] transition-colors cursor-pointer px-2 -mx-2"
                   >
-                    <span className="font-mono text-sm text-[var(--ink-2)] w-12">
-                      {time}
+                    <span className={`font-mono text-sm w-12 ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : 'text-[var(--ink-2)]'}`}>
+                      {displayTime}
                     </span>
                     
                     <div className="flex items-center gap-3 w-32">
@@ -221,9 +227,6 @@ export default function Dashboard() {
               <span className="font-mono text-4xl">--</span>
               <span className="kicker">% THIS MONTH</span>
             </div>
-            <p className="mt-2 text-sm text-[var(--ink-2)]">
-              Stats will populate once you have a few days of records.
-            </p>
           </div>
 
           <hr className="rule" />
@@ -237,6 +240,7 @@ export default function Dashboard() {
         </aside>
       </main>
 
+      {/* Modal */}
       {selectedPrayer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-[var(--paper)] w-full max-w-md border border-[var(--line-strong)] shadow-2xl p-6 sm:p-8">
@@ -303,11 +307,9 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-
           </div>
         </div>
       )}
-
     </div>
   )
 }
