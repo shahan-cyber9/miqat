@@ -1,21 +1,23 @@
 @import "tailwindcss";
 
 :root {
-  --paper:       #F9F6F0; 
-  --surface:     #FCFAF5;
-  --ink:         #1A202C; 
-  --ink-2:       #718096; 
-  --line:        #E2DCD0;
-  --line-strong: #C4BCAC;
+  /* Modern Warm Palette */
+  --paper:       #F9F8F6;
+  --surface:     #FFFFFF;
+  --ink:         #1A1D20;
+  --ink-2:       #6B7280;
+  --line:        #E5E7EB;
+  --line-strong: #D1D5DB;
 
-  --st-on-time:  #1C3F34; 
-  --st-late:     #A8823F;
-  --st-qadha:    #3F5A72;
-  --st-missed:   #7B2D2A;
-  --st-empty:    #B9B1A1;
+  /* Status Colors (Rich) */
+  --st-on-time:  #10B981; /* Modern Emerald */
+  --st-late:     #F59E0B; /* Amber */
+  --st-qadha:    #3B82F6; /* Blue */
+  --st-missed:   #EF4444; /* Red */
+  --st-empty:    #9CA3AF;
 
-  --accent:      #1C3F34;
-  --accent-ink:  #F9F6F0;
+  --accent:      #047857; /* Deep Emerald */
+  --accent-ink:  #FFFFFF;
 
   --font-display: 'Fraunces', Georgia, serif;
   --font-ui:      'Schibsted Grotesk', system-ui, sans-serif;
@@ -23,21 +25,21 @@
 }
 
 [data-theme="dark"] {
-  --paper:       #0B0E12;
-  --surface:     #161B22;
-  --ink:         #E8E4DA;
-  --ink-2:       #9AA0A6;
-  --line:        #232A33;
-  --line-strong: #333C48;
+  --paper:       #0F172A;
+  --surface:     #1E293B;
+  --ink:         #F1F5F9;
+  --ink-2:       #94A3B8;
+  --line:        #334155;
+  --line-strong: #475569;
 
-  --st-on-time:  #6FA08C;
-  --st-late:     #D4AF6A;
-  --st-qadha:    #7FA0C0;
-  --st-missed:   #B4655F;
-  --st-empty:    #4B5560;
+  --st-on-time:  #34D399;
+  --st-late:     #FBBF24;
+  --st-qadha:    #60A5FA;
+  --st-missed:   #F87171;
+  --st-empty:    #64748B;
 
-  --accent:      #D4AF6A;
-  --accent-ink:  #0B0E12;
+  --accent:      #10B981;
+  --accent-ink:  #0F172A;
 }
 
 @layer base {

@@ -1,20 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
-
-function Wordmark({ size = 28 }: { size?: number }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="miter">
-        <path d="M4 27V5l12 14L28 5v22" />
-        <line x1="2" y1="19" x2="30" y2="19" />
-      </svg>
-      <span className="font-display" style={{ fontSize: size * 0.85, letterSpacing: '-0.01em' }}>MIQAT</span>
-    </div>
-  )
-}
+import NavBar from '../components/NavBar'
 
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
@@ -164,37 +152,32 @@ export default function Settings() {
   if (loading) return <div className="p-8 font-mono text-sm">LOADING TIMETABLE...</div>
 
   return (
-    <div className="mx-auto max-w-[800px] px-6 py-8">
-      <header className="flex items-center justify-between border-b border-[var(--line)] pb-4 mb-12">
-        <Wordmark />
-        <div className="flex items-center gap-4">
-          <Link to="/instructions" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">GUIDE</Link>
-          <Link to="/" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">TODAY</Link>
-          <Link to="/archive" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">ARCHIVE</Link>
-          <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)] transition-colors">LOG OUT</button>
-        </div>
-      </header>
+    <div className="mx-auto max-w-[800px] px-4 sm:px-6 pt-0 pb-24 min-h-screen">
+      <NavBar />
 
-      <main>
+      <main className="mt-8">
         <div className="mb-8">
           <p className="kicker mb-2">PREFERENCES</p>
-          <h1 className="font-display text-4xl font-normal">Timetable Setup</h1>
-          <p className="mt-2 text-sm text-[var(--ink-2)] max-w-[50ch]">
+          <h1 className="font-display text-3xl sm:text-4xl font-normal">Timetable Setup</h1>
+          <p className="font-display text-sm italic text-[var(--ink-2)] mt-2">
+            "Allah does not burden a soul beyond what it can bear." (Quran 2:286)
+          </p>
+          <p className="mt-4 text-sm text-[var(--ink-2)] max-w-[50ch]">
             Select the exact times from your local mosque. We will automatically calculate and save the minute differences for you.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           
-          <section>
-            <h2 className="font-display text-2xl mb-6 border-b border-[var(--line)] pb-2">Calculation Base</h2>
+          <section className="bg-[var(--surface)] border border-[var(--line)] rounded-xl p-6 shadow-sm">
+            <h2 className="font-display text-2xl mb-4 border-b border-[var(--line)] pb-2">Calculation Base</h2>
             
             <div className="mb-6">
               <label className="kicker mb-2 block">Method</label>
               <select 
                 value={method} 
                 onChange={(e) => setMethod(parseInt(e.target.value))}
-                className="w-full border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
+                className="w-full border border-[var(--line)] rounded-lg bg-[var(--paper)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
               >
                 <option value="1">University of Islamic Sciences, Karachi</option>
                 <option value="2">Islamic Society of North America (ISNA)</option>
@@ -220,8 +203,8 @@ export default function Settings() {
             </div>
           </section>
 
-          <section>
-            <h2 className="font-display text-2xl mb-6 border-b border-[var(--line)] pb-2">Your Mosque Timings</h2>
+          <section className="bg-[var(--surface)] border border-[var(--line)] rounded-xl p-6 shadow-sm">
+            <h2 className="font-display text-2xl mb-4 border-b border-[var(--line)] pb-2">Your Mosque Timings</h2>
             <div className="flex flex-col gap-4">
               {PRAYERS.map(prayer => (
                 <div key={prayer} className="flex items-center justify-between pb-3 border-b border-[var(--line)] last:border-0 last:pb-0">
@@ -239,7 +222,7 @@ export default function Settings() {
                       type="time" 
                       value={targetTimes[prayer]} 
                       onChange={(e) => handleTimeChange(prayer, e.target.value)}
-                      className="w-[140px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
+                      className="w-[130px] border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
                     />
                   </div>
                 </div>
@@ -248,12 +231,12 @@ export default function Settings() {
           </section>
         </div>
 
-        <div className="mt-12 pt-6 border-t border-[var(--line)] flex items-center justify-between">
+        <div className="mt-8 pt-6 border-t border-[var(--line)] flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="kicker text-[var(--st-on-time)]">{message}</p>
           <button 
             onClick={handleSave} 
             disabled={saving}
-            className="border border-[var(--accent)] bg-[var(--accent)] px-8 py-3 font-mono uppercase tracking-widest text-sm text-[var(--accent-ink)] hover:opacity-90 disabled:opacity-50 transition-all hover:-translate-y-0.5 active:translate-y-0"
+            className="w-full sm:w-auto border border-[var(--accent)] bg-[var(--accent)] rounded-xl px-8 py-3 font-mono uppercase tracking-widest text-sm text-[var(--accent-ink)] hover:opacity-90 disabled:opacity-50 transition-all shadow-md hover:-translate-y-0.5 active:translate-y-0"
           >
             {saving ? 'SAVING...' : 'SAVE TIMETABLE'}
           </button>

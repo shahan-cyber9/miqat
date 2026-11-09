@@ -1,19 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-
-function Wordmark({ size = 28 }: { size?: number }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="miter">
-        <path d="M4 27V5l12 14L28 5v22" />
-        <line x1="2" y1="19" x2="30" y2="19" />
-      </svg>
-      <span className="font-display" style={{ fontSize: size * 0.85, letterSpacing: '-0.01em' }}>MIQAT</span>
-    </div>
-  )
-}
+import NavBar from '../components/NavBar'
 
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
@@ -99,39 +87,32 @@ export default function Archive() {
   }
 
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8">
-      <header className="flex items-center justify-between border-b border-[var(--line)] pb-4">
-        <Wordmark />
-        <div className="flex items-center gap-4">
-          <Link to="/instructions" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">GUIDE</Link>
-          <Link to="/" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">TODAY</Link>
-          <Link to="/settings" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">SETTINGS</Link>
-          <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)] transition-colors">LOG OUT</button>
-        </div>
-      </header>
+    <div className="mx-auto max-w-[1120px] px-4 sm:px-6 pt-0 pb-24 min-h-screen">
+      <NavBar />
 
-      <main className="mt-12 flex flex-col lg:flex-row gap-8">
+      <main className="mt-8 flex flex-col lg:flex-row gap-8">
         
         <div className="flex-1">
-          <div className="flex items-end justify-between mb-8">
-            <div>
-              <p className="kicker mb-2">ARCHIVE</p>
-              <h1 className="font-display m-0 text-4xl font-normal">
-                {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </h1>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={prevMonth} className="border border-[var(--line)] px-3 py-1 kicker hover:bg-[var(--surface)] transition-colors">
+          <div className="mb-8">
+            <p className="kicker mb-2">ARCHIVE</p>
+            <h1 className="font-display m-0 text-3xl sm:text-4xl font-normal">
+              {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </h1>
+            <p className="font-display text-sm italic text-[var(--ink-2)] mt-2">
+              "Establish prayer at the two ends of the day and in the first hours of the night." (Quran 11:114)
+            </p>
+            <div className="flex gap-2 mt-4">
+              <button onClick={prevMonth} className="border border-[var(--line)] rounded-lg px-3 py-1 kicker hover:bg-[var(--surface)] transition-colors">
                 PREV
               </button>
-              <button onClick={nextMonth} className="border border-[var(--line)] px-3 py-1 kicker hover:bg-[var(--surface)] transition-colors">
+              <button onClick={nextMonth} className="border border-[var(--line)] rounded-lg px-3 py-1 kicker hover:bg-[var(--surface)] transition-colors">
                 NEXT
               </button>
             </div>
           </div>
 
-          <div className="border border-[var(--line)] bg-[var(--surface)]">
-            <div className="grid grid-cols-7 border-b border-[var(--line)]">
+          <div className="border border-[var(--line)] bg-[var(--surface)] rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-[var(--line)] bg-[var(--paper)]/50">
               {daysOfWeek.map(day => (
                 <div key={day} className="py-3 text-center kicker border-r border-[var(--line)] last:border-r-0">
                   {day}
@@ -160,7 +141,7 @@ export default function Archive() {
                     key={day} 
                     onClick={() => setSelectedDate(dateStr)}
                     className={`min-h-[80px] border-b border-r border-[var(--line)] p-2 transition-colors cursor-pointer relative group ${
-                      isSelected ? 'bg-[var(--paper)] ring-1 ring-inset ring-[var(--accent)]' : 'hover:bg-[var(--paper)]'
+                      isSelected ? 'bg-[var(--paper)] ring-2 ring-inset ring-[var(--accent)]' : 'hover:bg-[var(--paper)]'
                     }`}
                   >
                     <span className={`font-mono text-sm ${isSelected ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>{day}</span>
@@ -182,7 +163,7 @@ export default function Archive() {
         </div>
 
         {selectedDate && (
-          <aside className="w-full lg:w-[300px] border border-[var(--line)] bg-[var(--surface)] p-6 h-fit sticky top-8">
+          <aside className="w-full lg:w-[320px] border border-[var(--line)] bg-[var(--surface)] rounded-xl p-6 h-fit sticky top-24 shadow-sm">
             <div className="flex justify-between items-start mb-6">
               <div>
                 <p className="kicker text-[var(--ink-2)] mb-1">DAILY RECORD</p>
@@ -190,7 +171,7 @@ export default function Archive() {
                   {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                 </h2>
               </div>
-              <button onClick={() => setSelectedDate(null)} className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">
+              <button onClick={() => setSelectedDate(null)} className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] bg-[var(--line)]/50 px-2 py-1 rounded-md">
                 CLOSE
               </button>
             </div>
