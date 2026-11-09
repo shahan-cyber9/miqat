@@ -8,7 +8,7 @@ import Instructions from './pages/Instructions'
 import Rooms from './pages/Rooms'
 import RoomDetail from './pages/RoomDetail'
 import JoinRoom from './pages/JoinRoom'
-import Footer from './components/Footer'
+
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
