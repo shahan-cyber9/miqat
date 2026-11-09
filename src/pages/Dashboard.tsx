@@ -2,19 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
-import { Link } from 'react-router-dom'
-
-function Wordmark({ size = 28 }: { size?: number }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="miter">
-        <path d="M4 27V5l12 14L28 5v22" />
-        <line x1="2" y1="19" x2="30" y2="19" />
-      </svg>
-      <span className="font-display" style={{ fontSize: size * 0.85, letterSpacing: '-0.01em' }}>MIQAT</span>
-    </div>
-  )
-}
+import NavBar from '../components/NavBar'
 
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
@@ -38,11 +26,14 @@ type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, 
 
 export default function Dashboard() {
   const { user } = useAuth()
+  
   const [records, setRecords] = useState<Record<string, PrayerRecord>>({})
   const [times, setTimes] = useState<PrayerTimes | null>(null)
   const [loading, setLoading] = useState(true)
   const [consistency, setConsistency] = useState<number | null>(null)
   
+  const [returnAyah, setReturnAyah] = useState<{ arabic: string, english: string, reference: string } | null>(null)
+
   const [selectedPrayer, setSelectedPrayer] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string>('on_time')
   const [prayerTime, setPrayerTime] = useState<string>('')
@@ -52,7 +43,6 @@ export default function Dashboard() {
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
-  // SMART LOGIC: Find the current window, check if logged, move to next if it is.
   const getHighlightedPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
@@ -63,20 +53,19 @@ export default function Dashboard() {
       timeMap[p] = h * 60 + m
     })
 
-    let currentWindow = 'isha' // Default to Isha if before Fajr
+    let currentWindow = 'isha'
     if (currentTime < timeMap.fajr) currentWindow = 'isha'
     else if (currentTime < timeMap.dhuhr) currentWindow = 'fajr'
     else if (currentTime < timeMap.asr) currentWindow = 'dhuhr'
     else if (currentTime < timeMap.maghrib) currentWindow = 'asr'
     else if (currentTime < timeMap.isha) currentWindow = 'maghrib'
 
-    // If the current window's prayer is already logged, find the next unlogged one
     if (records[currentWindow]?.status) {
       const currentIndex = PRAYERS.indexOf(currentWindow as any)
       for (let i = currentIndex + 1; i < PRAYERS.length; i++) {
         if (!records[PRAYERS[i]]?.status) return PRAYERS[i]
       }
-      return 'fajr' // If all remaining today are logged, next is tomorrow's Fajr
+      return 'fajr'
     }
 
     return currentWindow
@@ -88,7 +77,6 @@ export default function Dashboard() {
     async function loadData() {
       if (!user) return
 
-      // Fetch preferences first
       const { data: prefs } = await supabase.from('prayer_preferences').select('*').eq('user_id', user.id).single()
       const method = prefs?.calculation_method || 1
       const school = prefs?.asr_school || 0
@@ -156,6 +144,29 @@ export default function Dashboard() {
     loadData()
   }, [user, todayStr, firstDayOfMonth])
 
+  useEffect(() => {
+    async function checkReturnReading() {
+      if (!times || !records) return
+      const currentTime = today.getHours() * 60 + today.getMinutes()
+      const [dhuhrH, dhuhrM] = times.dhuhr.split(':').map(Number)
+      
+      if (currentTime > (dhuhrH * 60 + dhuhrM) && !records['fajr']) {
+        const { data } = await supabase.from('return_verses').select('*').limit(10)
+        if (data && data.length > 0) {
+          const randomVerse = data[Math.floor(Math.random() * data.length)]
+          setReturnAyah({
+            arabic: randomVerse.arabic_text || "إِنَّ الصَّلَاةَ كَانَتْ عَلَى الْمُؤْمِنِينَ كِتَابًا مَّوْقُوتًا",
+            english: randomVerse.translation || "Indeed, prayer has been decreed upon the believers a decree of specified times.",
+            reference: `QURAN ${randomVerse.reference}`
+          })
+        }
+      } else {
+        setReturnAyah(null)
+      }
+    }
+    checkReturnReading()
+  }, [times, records, today])
+
   const openModal = (prayerName: string) => {
     setSelectedPrayer(prayerName)
     const existing = records[prayerName]
@@ -174,6 +185,7 @@ export default function Dashboard() {
     setIsSaving(true)
     const isoString = new Date(`${todayStr}T${prayerTime}:00`).toISOString()
 
+    // 1. Save the prayer record
     const { error } = await supabase.from('prayer_records').upsert({ 
       user_id: user.id, prayer_date: todayStr, prayer_name: selectedPrayer, status: selectedStatus,
       prayed_at: isoString, timezone_at_log: Intl.DateTimeFormat().resolvedOptions().timeZone, calculation_method: 1
@@ -181,6 +193,34 @@ export default function Dashboard() {
 
     if (!error) {
       setRecords({ ...records, [selectedPrayer]: { status: selectedStatus, prayed_at: isoString } })
+
+      // 2. AUTOMATIC PENALTY LOGIC
+      if (selectedStatus === 'late' || selectedStatus === 'missed' || selectedStatus === 'qadha') {
+        const { data: memberships } = await supabase
+          .from('room_members')
+          .select('room_id, rooms(penalty_late, penalty_missed, penalty_qadha)')
+          .eq('user_id', user.id)
+
+        if (memberships && memberships.length > 0) {
+          const penaltiesToInsert = memberships.map((m: any) => {
+            let amount = 0
+            if (selectedStatus === 'late') amount = m.rooms.penalty_late
+            if (selectedStatus === 'missed') amount = m.rooms.penalty_missed
+            if (selectedStatus === 'qadha') amount = m.rooms.penalty_qadha
+
+            return {
+              room_id: m.room_id,
+              user_id: user.id,
+              amount: amount,
+              reason: selectedStatus,
+              prayer_date: todayStr
+            }
+          })
+
+          await supabase.from('room_penalties').insert(penaltiesToInsert)
+        }
+      }
+
       setSelectedPrayer(null) 
     }
     setIsSaving(false)
@@ -210,15 +250,8 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8 relative">
-      <header className="flex items-center justify-between border-b border-[var(--line)] pb-4">
-        <Wordmark />
-        <div className="flex items-center gap-4">
-          <Link to="/archive" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">ARCHIVE</Link>
-          <Link to="/settings" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">SETTINGS</Link>
-          <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)]">LOG OUT</button>
-        </div>
-      </header>
+    <div className="mx-auto max-w-[1120px] px-6 pt-8 pb-24 relative">
+      <NavBar />
 
       <main className="mt-12 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_300px]">
         <section>
@@ -228,6 +261,21 @@ export default function Dashboard() {
               {today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </h1>
           </div>
+
+          {returnAyah && (
+            <div className="mb-8 p-6 border border-[var(--line)] bg-[var(--surface)] relative shadow-sm border-l-2 border-l-[var(--st-late)]">
+              <div className="absolute -top-3 left-4 bg-[var(--surface)] px-2">
+                <span className="kicker text-[var(--st-late)] text-[10px]">A GENTLE REMINDER</span>
+              </div>
+              <p className="font-arabic text-xl text-right text-[var(--ink)] leading-relaxed mb-3" dir="rtl">
+                {returnAyah.arabic}
+              </p>
+              <p className="font-display text-base italic text-[var(--ink-2)]">
+                "{returnAyah.english}"
+              </p>
+              <p className="kicker text-[var(--ink-2)] mt-2 text-right">{returnAyah.reference}</p>
+            </div>
+          )}
 
           {loading ? (
             <p className="font-mono text-sm text-[var(--ink-2)]">CALCULATING TIMES...</p>
@@ -292,7 +340,6 @@ export default function Dashboard() {
         </aside>
       </main>
 
-      {/* Modal */}
       {selectedPrayer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-[var(--paper)] w-full max-w-md border border-[var(--line-strong)] shadow-2xl p-6 sm:p-8">

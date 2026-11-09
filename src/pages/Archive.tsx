@@ -41,7 +41,6 @@ export default function Archive() {
   const [loading, setLoading] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(new Date())
   
-  // Store the raw data for the month so we can use it in the side panel
   const [monthRecords, setMonthRecords] = useState<Record<string, DayRecord[]>>({})
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
@@ -104,22 +103,15 @@ export default function Archive() {
       <header className="flex items-center justify-between border-b border-[var(--line)] pb-4">
         <Wordmark />
         <div className="flex items-center gap-4">
-          <Link to="/" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">
-            TODAY
-          </Link>
-          <span className="kicker hidden sm:block">{user?.email}</span>
-          <button 
-            onClick={() => supabase.auth.signOut()}
-            className="kicker cursor-pointer border border-[var(--line-strong)] bg-transparent px-3 py-2 text-[var(--ink)] hover:bg-[var(--surface)] transition-colors"
-          >
-            LOG OUT
-          </button>
+          <Link to="/instructions" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">GUIDE</Link>
+          <Link to="/" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">TODAY</Link>
+          <Link to="/settings" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">SETTINGS</Link>
+          <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)] transition-colors">LOG OUT</button>
         </div>
       </header>
 
       <main className="mt-12 flex flex-col lg:flex-row gap-8">
         
-        {/* Calendar Section */}
         <div className="flex-1">
           <div className="flex items-end justify-between mb-8">
             <div>
@@ -189,7 +181,6 @@ export default function Archive() {
           </p>
         </div>
 
-        {/* Day Details Side Panel */}
         {selectedDate && (
           <aside className="w-full lg:w-[300px] border border-[var(--line)] bg-[var(--surface)] p-6 h-fit sticky top-8">
             <div className="flex justify-between items-start mb-6">
@@ -199,10 +190,7 @@ export default function Archive() {
                   {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                 </h2>
               </div>
-              <button 
-                onClick={() => setSelectedDate(null)}
-                className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]"
-              >
+              <button onClick={() => setSelectedDate(null)} className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">
                 CLOSE
               </button>
             </div>

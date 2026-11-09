@@ -19,7 +19,6 @@ function Wordmark({ size = 28 }: { size?: number }) {
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
 
-// Helper to convert 24h time to 12h for display
 const format12H = (time24: string) => {
   if (!time24) return ''
   const [h, m] = time24.split(':').map(Number)
@@ -28,29 +27,22 @@ const format12H = (time24: string) => {
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
-// Helper to calculate the difference in minutes between two HH:mm strings
 const calculateOffset = (baseTime: string, targetTime: string) => {
   if (!baseTime || !targetTime) return 0
   const [baseH, baseM] = baseTime.split(':').map(Number)
   const [targetH, targetM] = targetTime.split(':').map(Number)
-  
   let diff = (targetH * 60 + targetM) - (baseH * 60 + baseM)
-  
-  // Handle midnight crossover (e.g., Isha at 23:50, target at 00:10)
   if (diff > 720) diff -= 1440
   if (diff < -720) diff += 1440
-  
   return diff
 }
 
-// Helper to apply offset to a base time
 const applyOffset = (baseTime: string, offset: number) => {
   if (!baseTime) return '12:00'
   const [h, m] = baseTime.split(':').map(Number)
   const totalMin = h * 60 + m + offset
   const newH = Math.floor(totalMin / 60) % 24
   const newM = totalMin % 60
-  // Handle negative hours wrapping around to previous day
   const finalH = newH < 0 ? newH + 24 : newH
   return `${String(finalH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
 }
@@ -63,11 +55,7 @@ export default function Settings() {
 
   const [method, setMethod] = useState(1)
   const [school, setSchool] = useState(0)
-  
-  // Store the raw API times
   const [baseTimes, setBaseTimes] = useState<PrayerTimes | null>(null)
-  
-  // Store the times the user has selected (what will be saved)
   const [targetTimes, setTargetTimes] = useState<PrayerTimes>({
     fajr: '05:00', dhuhr: '13:00', asr: '16:00', maghrib: '18:00', isha: '20:00'
   })
@@ -76,7 +64,6 @@ export default function Settings() {
     async function loadData() {
       if (!user) return
 
-      // 1. Fetch user prefs
       const { data } = await supabase.from('prayer_preferences').select('*').eq('user_id', user.id).single()
       const savedMethod = data?.calculation_method || 1
       const savedSchool = data?.asr_school || 0
@@ -84,13 +71,10 @@ export default function Settings() {
       setMethod(savedMethod)
       setSchool(savedSchool)
 
-      // 2. Fetch Base API Times (to show what the default is)
       const fetchApiTimes = async (lat: number, lng: number) => {
         const fetched = await getPrayerTimes(lat, lng, new Date(), savedMethod, savedSchool)
         if (fetched) {
           setBaseTimes(fetched)
-          
-          // 3. Apply saved offsets to the base times to set the initial input values
           const savedOffsets = {
             fajr: data?.fajr_offset || 0,
             dhuhr: data?.dhuhr_offset || 0,
@@ -98,7 +82,6 @@ export default function Settings() {
             maghrib: data?.maghrib_offset || 0,
             isha: data?.isha_offset || 0,
           }
-          
           setTargetTimes({
             fajr: applyOffset(fetched.fajr, savedOffsets.fajr),
             dhuhr: applyOffset(fetched.dhuhr, savedOffsets.dhuhr),
@@ -113,7 +96,7 @@ export default function Settings() {
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => fetchApiTimes(pos.coords.latitude, pos.coords.longitude),
-          () => fetchApiTimes(19.0760, 72.8777) // Fallback
+          () => fetchApiTimes(19.0760, 72.8777)
         )
       } else {
         fetchApiTimes(19.0760, 72.8777)
@@ -122,19 +105,16 @@ export default function Settings() {
     loadData()
   }, [user])
 
-  // When user changes the Method or School, we need to refetch the base times
   useEffect(() => {
-    if (loading) return // Don't run on initial load
+    if (loading) return
     async function recalculateBase() {
       if (!baseTimes) return
-      // For simplicity, we'll just re-fetch if they change the dropdowns
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const fetched = await getPrayerTimes(pos.coords.latitude, pos.coords.longitude, new Date(), method, school)
             if (fetched) {
               setBaseTimes(fetched)
-              // Reset target times to the new base times (offset becomes 0 visually)
               setTargetTimes(fetched)
             }
           }
@@ -153,7 +133,6 @@ export default function Settings() {
     setSaving(true)
     setMessage(null)
 
-    // Calculate the difference between the user's chosen time and the API base time
     const newOffsets = {
       fajr: calculateOffset(baseTimes.fajr, targetTimes.fajr),
       dhuhr: calculateOffset(baseTimes.dhuhr, targetTimes.dhuhr),
@@ -189,6 +168,7 @@ export default function Settings() {
       <header className="flex items-center justify-between border-b border-[var(--line)] pb-4 mb-12">
         <Wordmark />
         <div className="flex items-center gap-4">
+          <Link to="/instructions" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">GUIDE</Link>
           <Link to="/" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">TODAY</Link>
           <Link to="/archive" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors">ARCHIVE</Link>
           <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)] transition-colors">LOG OUT</button>
@@ -206,7 +186,6 @@ export default function Settings() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
           
-          {/* Calculation Methods */}
           <section>
             <h2 className="font-display text-2xl mb-6 border-b border-[var(--line)] pb-2">Calculation Base</h2>
             
@@ -241,7 +220,6 @@ export default function Settings() {
             </div>
           </section>
 
-          {/* Exact Mosque Times */}
           <section>
             <h2 className="font-display text-2xl mb-6 border-b border-[var(--line)] pb-2">Your Mosque Timings</h2>
             <div className="flex flex-col gap-4">
