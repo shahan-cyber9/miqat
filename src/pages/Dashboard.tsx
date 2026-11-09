@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
+import { Link } from 'react-router-dom'
 
 function Wordmark({ size = 28 }: { size?: number }) {
   return (
@@ -18,7 +19,6 @@ function Wordmark({ size = 28 }: { size?: number }) {
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
   const fill = active ? 'currentColor' : 'none'
-
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.5">
       {name === 'fajr' && (<><line x1="2" y1="18" x2="22" y2="18" /><circle cx="12" cy="10" r="3" fill={fill} /></>)}
@@ -38,10 +38,10 @@ type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, 
 
 export default function Dashboard() {
   const { user } = useAuth()
-  
   const [records, setRecords] = useState<Record<string, PrayerRecord>>({})
   const [times, setTimes] = useState<PrayerTimes | null>(null)
   const [loading, setLoading] = useState(true)
+  const [consistency, setConsistency] = useState<number | null>(null)
   
   const [selectedPrayer, setSelectedPrayer] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string>('on_time')
@@ -50,51 +50,111 @@ export default function Dashboard() {
 
   const today = new Date()
   const todayStr = today.toLocaleDateString('en-CA')
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
-  // Fetch records AND calculate prayer times based on location
+  // SMART LOGIC: Find the current window, check if logged, move to next if it is.
+  const getHighlightedPrayer = () => {
+    if (!times) return null
+    const currentTime = today.getHours() * 60 + today.getMinutes()
+    
+    const timeMap: Record<string, number> = {}
+    PRAYERS.forEach(p => {
+      const [h, m] = times[p].split(':').map(Number)
+      timeMap[p] = h * 60 + m
+    })
+
+    let currentWindow = 'isha' // Default to Isha if before Fajr
+    if (currentTime < timeMap.fajr) currentWindow = 'isha'
+    else if (currentTime < timeMap.dhuhr) currentWindow = 'fajr'
+    else if (currentTime < timeMap.asr) currentWindow = 'dhuhr'
+    else if (currentTime < timeMap.maghrib) currentWindow = 'asr'
+    else if (currentTime < timeMap.isha) currentWindow = 'maghrib'
+
+    // If the current window's prayer is already logged, find the next unlogged one
+    if (records[currentWindow]?.status) {
+      const currentIndex = PRAYERS.indexOf(currentWindow as any)
+      for (let i = currentIndex + 1; i < PRAYERS.length; i++) {
+        if (!records[PRAYERS[i]]?.status) return PRAYERS[i]
+      }
+      return 'fajr' // If all remaining today are logged, next is tomorrow's Fajr
+    }
+
+    return currentWindow
+  }
+
+  const highlightedPrayer = getHighlightedPrayer()
+
   useEffect(() => {
     async function loadData() {
       if (!user) return
 
-      // 1. Fetch saved records
-      const { data, error } = await supabase
+      // Fetch preferences first
+      const { data: prefs } = await supabase.from('prayer_preferences').select('*').eq('user_id', user.id).single()
+      const method = prefs?.calculation_method || 1
+      const school = prefs?.asr_school || 0
+      const offsets = prefs || { fajr_offset: 0, dhuhr_offset: 0, asr_offset: 0, maghrib_offset: 0, isha_offset: 0 }
+
+      const { data: todayData } = await supabase
         .from('prayer_records')
         .select('prayer_name, status, prayed_at')
         .eq('user_id', user.id)
         .eq('prayer_date', todayStr)
 
-      if (!error && data) {
-        const mappedData = data.reduce((acc, row) => {
+      if (todayData) {
+        const mappedData = todayData.reduce((acc, row) => {
           acc[row.prayer_name] = { status: row.status, prayed_at: row.prayed_at }
           return acc
         }, {} as Record<string, PrayerRecord>)
         setRecords(mappedData)
       }
 
-      // 2. Fetch prayer times using Geolocation
+      const { data: monthData } = await supabase
+        .from('prayer_records')
+        .select('status')
+        .eq('user_id', user.id)
+        .gte('prayer_date', firstDayOfMonth)
+        .lte('prayer_date', todayStr)
+
+      if (monthData) {
+        const completed = monthData.filter(r => r.status === 'on_time' || r.status === 'late').length
+        const daysPassed = today.getDate() 
+        const expected = daysPassed * 5
+        setConsistency(Math.min(Math.round((completed / expected) * 100), 100))
+      }
+
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           async (position) => {
             const { latitude, longitude } = position.coords
-            const fetchedTimes = await getPrayerTimes(latitude, longitude, today)
-            if (fetchedTimes) setTimes(fetchedTimes)
+            const fetched = await getPrayerTimes(latitude, longitude, today, method, school)
+            
+            if (fetched) {
+              const adjusted = { ...fetched }
+              PRAYERS.forEach(p => {
+                const offset = offsets[`${p}_offset` as keyof typeof offsets] || 0
+                if (offset !== 0) {
+                  const [h, m] = adjusted[p].split(':').map(Number)
+                  const totalMin = h * 60 + m + offset
+                  const newH = Math.floor(totalMin / 60) % 24
+                  const newM = totalMin % 60
+                  adjusted[p] = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
+                }
+              })
+              setTimes(adjusted)
+            }
             setLoading(false)
           },
-          // Fallback if user denies location (Default: Mumbai coordinates)
-          async (err) => {
-            console.warn('Location denied. Using fallback coordinates.', err)
-            const fallbackTimes = await getPrayerTimes(19.0760, 72.8777, today)
-            if (fallbackTimes) setTimes(fallbackTimes)
+          async () => {
+            const fallback = await getPrayerTimes(19.0760, 72.8777, today, method, school)
+            if (fallback) setTimes(fallback)
             setLoading(false)
           }
         )
-      } else {
-        setLoading(false)
-      }
+      } else setLoading(false)
     }
 
     loadData()
-  }, [user, todayStr])
+  }, [user, todayStr, firstDayOfMonth])
 
   const openModal = (prayerName: string) => {
     setSelectedPrayer(prayerName)
@@ -105,25 +165,18 @@ export default function Dashboard() {
       const date = new Date(existing.prayed_at)
       setPrayerTime(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`)
     } else {
-      // If empty, pre-fill with the scheduled time for that prayer
-      const scheduledTime = times ? times[prayerName as keyof PrayerTimes] : '12:00'
-      setPrayerTime(scheduledTime)
+      setPrayerTime(times ? times[prayerName as keyof PrayerTimes] : '12:00')
     }
   }
 
   const savePrayer = async () => {
     if (!user || !selectedPrayer) return
     setIsSaving(true)
-
-    const dateTimeString = `${todayStr}T${prayerTime}:00`
-    const isoString = new Date(dateTimeString).toISOString()
+    const isoString = new Date(`${todayStr}T${prayerTime}:00`).toISOString()
 
     const { error } = await supabase.from('prayer_records').upsert({ 
-      user_id: user.id, 
-      prayer_date: todayStr, 
-      prayer_name: selectedPrayer, 
-      status: selectedStatus,
-      prayed_at: isoString
+      user_id: user.id, prayer_date: todayStr, prayer_name: selectedPrayer, status: selectedStatus,
+      prayed_at: isoString, timezone_at_log: Intl.DateTimeFormat().resolvedOptions().timeZone, calculation_method: 1
     }, { onConflict: 'user_id,prayer_date,prayer_name' })
 
     if (!error) {
@@ -146,8 +199,14 @@ export default function Dashboard() {
 
   const formatTime = (isoString?: string | null) => {
     if (!isoString) return null
-    const date = new Date(isoString)
-    return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+    return new Date(isoString).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  }
+
+  const formatScheduledTime = (timeStr: string) => {
+    const [hours, minutes] = timeStr.split(':').map(Number)
+    const date = new Date()
+    date.setHours(hours, minutes)
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
   }
 
   return (
@@ -155,13 +214,9 @@ export default function Dashboard() {
       <header className="flex items-center justify-between border-b border-[var(--line)] pb-4">
         <Wordmark />
         <div className="flex items-center gap-4">
-          <span className="kicker hidden sm:block">{user?.email}</span>
-          <button 
-            onClick={() => supabase.auth.signOut()}
-            className="kicker cursor-pointer border border-[var(--line-strong)] bg-transparent px-3 py-2 text-[var(--ink)] hover:bg-[var(--surface)] transition-colors"
-          >
-            LOG OUT
-          </button>
+          <Link to="/archive" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">ARCHIVE</Link>
+          <Link to="/settings" className="kicker text-[var(--ink-2)] hover:text-[var(--ink)]">SETTINGS</Link>
+          <button onClick={() => supabase.auth.signOut()} className="kicker border border-[var(--line-strong)] px-3 py-2 hover:bg-[var(--surface)]">LOG OUT</button>
         </div>
       </header>
 
@@ -181,31 +236,33 @@ export default function Dashboard() {
               {PRAYERS.map((prayer) => {
                 const record = records[prayer]
                 const status = record?.status || 'empty'
+                const displayTime = formatTime(record?.prayed_at) || (times ? formatScheduledTime(times[prayer as keyof PrayerTimes]) : '--:--')
                 
-                // The left side shows the logged time if it exists, otherwise the scheduled time
-                const displayTime = formatTime(record?.prayed_at) || (times ? times[prayer as keyof PrayerTimes] : '--:--')
+                const isUpNext = prayer === highlightedPrayer && status === 'empty'
                 
                 return (
                   <div 
                     key={prayer} 
                     onClick={() => openModal(prayer)}
-                    className="group flex items-center gap-6 border-b border-[var(--line)] py-4 hover:bg-[var(--surface)] transition-colors cursor-pointer px-2 -mx-2"
+                    className={`group flex items-center gap-6 border-b border-[var(--line)] py-4 transition-colors cursor-pointer px-2 -mx-2 ${
+                      isUpNext ? 'bg-[var(--surface)] border-l-2 border-l-[var(--accent)] border-b-[var(--line)]' : 'hover:bg-[var(--surface)] border-l-2 border-l-transparent'
+                    }`}
                   >
-                    <span className={`font-mono text-sm w-12 ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : 'text-[var(--ink-2)]'}`}>
+                    <span className={`font-mono text-sm w-24 ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
                       {displayTime}
                     </span>
                     
                     <div className="flex items-center gap-3 w-32">
-                      <span style={{ color: status !== 'empty' ? `var(--st-${status.replace('_', '-')})` : 'var(--ink-2)' }}>
-                        <PrayerMarker name={prayer} active={status !== 'empty'} />
+                      <span style={{ color: status !== 'empty' ? `var(--st-${status.replace('_', '-')})` : isUpNext ? 'var(--accent)' : 'var(--ink-2)' }}>
+                        <PrayerMarker name={prayer} active={status !== 'empty' || isUpNext} />
                       </span>
-                      <span className="font-display text-lg capitalize">{prayer}</span>
+                      <span className={`font-display text-lg capitalize ${isUpNext ? 'font-medium' : ''}`}>{prayer}</span>
                     </div>
 
                     <div className="ml-auto text-right">
                       {status === 'empty' ? (
-                        <span className="kicker text-[var(--st-empty)] group-hover:text-[var(--ink)] transition-colors">
-                          NOT LOGGED
+                        <span className={`kicker ${isUpNext ? 'text-[var(--accent)]' : 'text-[var(--st-empty)] group-hover:text-[var(--ink)]'}`}>
+                          {isUpNext ? 'UP NEXT' : 'NOT LOGGED'}
                         </span>
                       ) : (
                         <span className="kicker" style={{ color: `var(--st-${status.replace('_', '-')})` }}>
@@ -223,20 +280,15 @@ export default function Dashboard() {
         <aside className="flex flex-col gap-8">
           <div>
             <p className="kicker mb-3">CONSISTENCY</p>
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-4xl">--</span>
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="font-mono text-4xl">{consistency !== null ? consistency : '--'}</span>
               <span className="kicker">% THIS MONTH</span>
             </div>
+            <div className="w-full h-[2px] bg-[var(--line)] mt-2">
+              <div className="h-full bg-[var(--st-on-time)] transition-all duration-500" style={{ width: `${consistency || 0}%` }} />
+            </div>
           </div>
-
           <hr className="rule" />
-
-          <div className="bg-[var(--surface)] p-4 border border-[var(--line)]">
-            <p className="kicker mb-2">HOW TO LOG</p>
-            <p className="text-sm mb-3">
-              Tap any prayer to record its status and the time you prayed.
-            </p>
-          </div>
         </aside>
       </main>
 
@@ -250,12 +302,7 @@ export default function Dashboard() {
                 <p className="kicker text-[var(--ink-2)] mb-1">LOG PRAYER</p>
                 <h2 className="font-display text-3xl font-normal capitalize">{selectedPrayer}</h2>
               </div>
-              <button 
-                onClick={() => setSelectedPrayer(null)}
-                className="kicker hover:text-[var(--ink)] text-[var(--ink-2)] transition-colors"
-              >
-                CANCEL
-              </button>
+              <button onClick={() => setSelectedPrayer(null)} className="kicker hover:text-[var(--ink)] text-[var(--ink-2)]">CANCEL</button>
             </div>
 
             <div className="mb-6">
@@ -266,9 +313,7 @@ export default function Dashboard() {
                     key={status}
                     onClick={() => setSelectedStatus(status)}
                     className={`border p-3 text-sm font-mono uppercase tracking-wider text-left transition-colors ${
-                      selectedStatus === status 
-                        ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]' 
-                        : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:border-[var(--line-strong)]'
+                      selectedStatus === status ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]' : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:border-[var(--line-strong)]'
                     }`}
                   >
                     {status.replace('_', ' ')}
@@ -280,29 +325,17 @@ export default function Dashboard() {
             <div className="mb-8">
               <label className="kicker mb-2 block" htmlFor="time">Actual Time Prayed</label>
               <input
-                id="time"
-                type="time"
-                value={prayerTime}
-                onChange={(e) => setPrayerTime(e.target.value)}
-                className="w-full border border-[var(--line)] bg-[var(--surface)] px-3 py-3 text-lg font-mono text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)] transition-all"
+                id="time" type="time" value={prayerTime} onChange={(e) => setPrayerTime(e.target.value)}
+                className="w-full border border-[var(--line)] bg-[var(--surface)] px-3 py-3 text-lg font-mono text-[var(--ink)] outline-none focus:border-[var(--accent)]"
               />
             </div>
 
             <div className="flex flex-col gap-3">
-              <button
-                onClick={savePrayer}
-                disabled={isSaving}
-                className="w-full border border-[var(--accent)] bg-[var(--accent)] px-4 py-4 font-mono uppercase tracking-widest text-sm text-[var(--accent-ink)] transition-all hover:-translate-y-0.5 hover:opacity-95 active:translate-y-0 disabled:opacity-50"
-              >
+              <button onClick={savePrayer} disabled={isSaving} className="w-full border border-[var(--accent)] bg-[var(--accent)] px-4 py-4 font-mono uppercase tracking-widest text-sm text-[var(--accent-ink)] hover:opacity-90 disabled:opacity-50">
                 {isSaving ? 'SAVING...' : 'SAVE RECORD'}
               </button>
-              
               {records[selectedPrayer] && (
-                <button
-                  onClick={clearPrayer}
-                  disabled={isSaving}
-                  className="w-full border border-transparent px-4 py-3 font-mono uppercase tracking-widest text-xs text-[var(--st-missed)] hover:bg-[var(--st-missed)]/10 transition-colors disabled:opacity-50"
-                >
+                <button onClick={clearPrayer} disabled={isSaving} className="w-full border border-transparent px-4 py-3 font-mono uppercase tracking-widest text-xs text-[var(--st-missed)] hover:bg-[var(--st-missed)]/10 disabled:opacity-50">
                   CLEAR RECORD
                 </button>
               )}
