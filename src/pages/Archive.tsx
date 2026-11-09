@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import NavBar from '../components/NavBar'
+import Footer from '../components/Footer'
 
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
@@ -211,6 +212,7 @@ export default function Archive() {
         )}
 
       </main>
+      <Footer />
     </div>
   )
 }

@@ -3,16 +3,35 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
 import NavBar from '../components/NavBar'
+import Footer from '../components/Footer'
 
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
 
+// Convert 24h string (17:00) to 12h string (5:00 PM)
 const format12H = (time24: string) => {
   if (!time24) return ''
   const [h, m] = time24.split(':').map(Number)
   const ampm = h >= 12 ? 'PM' : 'AM'
   const h12 = h % 12 || 12
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
+}
+
+// Convert typed string (5:00 PM or 17:00) to 24h string (17:00)
+const parseTo24H = (timeStr: string) => {
+  const regex = /^(\d{1,2}):(\d{2})\s*(am|pm)?$/i
+  const match = timeStr.match(regex)
+  if (!match) return null // Invalid format
+  
+  let hours = parseInt(match[1])
+  const minutes = parseInt(match[2])
+  const ampm = match[3]?.toUpperCase()
+
+  if (ampm === 'PM' && hours < 12) hours += 12
+  if (ampm === 'AM' && hours === 12) hours = 0
+  
+  if (hours > 23 || minutes > 59) return null
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 const calculateOffset = (baseTime: string, targetTime: string) => {
@@ -44,8 +63,10 @@ export default function Settings() {
   const [method, setMethod] = useState(1)
   const [school, setSchool] = useState(0)
   const [baseTimes, setBaseTimes] = useState<PrayerTimes | null>(null)
+  
+  // Store as typed strings (e.g., "5:00 PM")
   const [targetTimes, setTargetTimes] = useState<PrayerTimes>({
-    fajr: '05:00', dhuhr: '13:00', asr: '16:00', maghrib: '18:00', isha: '20:00'
+    fajr: '5:00 AM', dhuhr: '1:00 PM', asr: '4:00 PM', maghrib: '6:00 PM', isha: '8:00 PM'
   })
 
   useEffect(() => {
@@ -64,18 +85,15 @@ export default function Settings() {
         if (fetched) {
           setBaseTimes(fetched)
           const savedOffsets = {
-            fajr: data?.fajr_offset || 0,
-            dhuhr: data?.dhuhr_offset || 0,
-            asr: data?.asr_offset || 0,
-            maghrib: data?.maghrib_offset || 0,
-            isha: data?.isha_offset || 0,
+            fajr: data?.fajr_offset || 0, dhuhr: data?.dhuhr_offset || 0, asr: data?.asr_offset || 0,
+            maghrib: data?.maghrib_offset || 0, isha: data?.isha_offset || 0,
           }
           setTargetTimes({
-            fajr: applyOffset(fetched.fajr, savedOffsets.fajr),
-            dhuhr: applyOffset(fetched.dhuhr, savedOffsets.dhuhr),
-            asr: applyOffset(fetched.asr, savedOffsets.asr),
-            maghrib: applyOffset(fetched.maghrib, savedOffsets.maghrib),
-            isha: applyOffset(fetched.isha, savedOffsets.isha),
+            fajr: format12H(applyOffset(fetched.fajr, savedOffsets.fajr)),
+            dhuhr: format12H(applyOffset(fetched.dhuhr, savedOffsets.dhuhr)),
+            asr: format12H(applyOffset(fetched.asr, savedOffsets.asr)),
+            maghrib: format12H(applyOffset(fetched.maghrib, savedOffsets.maghrib)),
+            isha: format12H(applyOffset(fetched.isha, savedOffsets.isha)),
           })
         }
         setLoading(false)
@@ -103,7 +121,10 @@ export default function Settings() {
             const fetched = await getPrayerTimes(pos.coords.latitude, pos.coords.longitude, new Date(), method, school)
             if (fetched) {
               setBaseTimes(fetched)
-              setTargetTimes(fetched)
+              setTargetTimes({
+                fajr: format12H(fetched.fajr), dhuhr: format12H(fetched.dhuhr), asr: format12H(fetched.asr), 
+                maghrib: format12H(fetched.maghrib), isha: format12H(fetched.isha)
+              })
             }
           }
         )
@@ -121,12 +142,24 @@ export default function Settings() {
     setSaving(true)
     setMessage(null)
 
+    // Parse all 5 typed times into 24h format
+    const parsedTimes: Record<string, string> = {}
+    for (const p of PRAYERS) {
+      const parsed = parseTo24H(targetTimes[p])
+      if (!parsed) {
+        setMessage(`Invalid time format for ${p}. Please use e.g., "5:00 AM".`)
+        setSaving(false)
+        return
+      }
+      parsedTimes[p] = parsed
+    }
+
     const newOffsets = {
-      fajr: calculateOffset(baseTimes.fajr, targetTimes.fajr),
-      dhuhr: calculateOffset(baseTimes.dhuhr, targetTimes.dhuhr),
-      asr: calculateOffset(baseTimes.asr, targetTimes.asr),
-      maghrib: calculateOffset(baseTimes.maghrib, targetTimes.maghrib),
-      isha: calculateOffset(baseTimes.isha, targetTimes.isha),
+      fajr: calculateOffset(baseTimes.fajr, parsedTimes.fajr),
+      dhuhr: calculateOffset(baseTimes.dhuhr, parsedTimes.dhuhr),
+      asr: calculateOffset(baseTimes.asr, parsedTimes.asr),
+      maghrib: calculateOffset(baseTimes.maghrib, parsedTimes.maghrib),
+      isha: calculateOffset(baseTimes.isha, parsedTimes.isha),
     }
 
     const { error } = await supabase.from('prayer_preferences').upsert({
@@ -163,7 +196,7 @@ export default function Settings() {
             "Allah does not burden a soul beyond what it can bear." (Quran 2:286)
           </p>
           <p className="mt-4 text-sm text-[var(--ink-2)] max-w-[50ch]">
-            Select the exact times from your local mosque. We will automatically calculate and save the minute differences for you.
+            Type your mosque's exact times (e.g., "5:30 AM"). We will calculate and save the differences.
           </p>
         </div>
 
@@ -219,10 +252,11 @@ export default function Settings() {
                   
                   <div className="flex items-center gap-2">
                     <input 
-                      type="time" 
+                      type="text" 
                       value={targetTimes[prayer]} 
                       onChange={(e) => handleTimeChange(prayer, e.target.value)}
-                      className="w-[130px] border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
+                      placeholder="e.g. 5:00 AM"
+                      className="w-[120px] border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
                     />
                   </div>
                 </div>
@@ -242,6 +276,7 @@ export default function Settings() {
           </button>
         </div>
       </main>
+      <Footer />
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import NavBar from '../components/NavBar'
+import Footer from '../components/Footer'
 
 function GeometricDivider() {
   return (
@@ -133,6 +134,7 @@ export default function Instructions() {
           </Link>
         </div>
       </div>
+      <Footer />
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import NavBar from '../components/NavBar'
+import Footer from '../components/Footer'
 
 type Room = {
   id: string
@@ -206,6 +207,7 @@ export default function Rooms() {
           </div>
         </div>
       )}
+      <Footer />
     </div>
   )
 }
