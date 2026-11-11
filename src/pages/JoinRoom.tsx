@@ -5,15 +5,18 @@ import { useAuth } from '../context/AuthContext'
 
 export default function JoinRoom() {
   const { roomId } = useParams()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
   const [status, setStatus] = useState('Joining room...')
 
   useEffect(() => {
     async function join() {
-      if (!user || !roomId) return
+      if (authLoading) return
+      if (!user || !roomId) {
+        navigate('/auth')
+        return
+      }
 
-      // Check if already a member
       const { data: existing } = await supabase
         .from('room_members')
         .select('id')
@@ -26,7 +29,6 @@ export default function JoinRoom() {
         return
       }
 
-      // Join the room
       const { error } = await supabase
         .from('room_members')
         .insert({ room_id: roomId, user_id: user.id })
@@ -38,7 +40,7 @@ export default function JoinRoom() {
       }
     }
     join()
-  }, [user, roomId, navigate])
+  }, [user, roomId, navigate, authLoading])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--paper)]">
