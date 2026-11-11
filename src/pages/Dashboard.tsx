@@ -137,34 +137,51 @@ export default function Dashboard() {
         setWeekData(weekGrid)
       }
 
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            const { latitude, longitude } = position.coords
-            const fetched = await getPrayerTimes(latitude, longitude, today, method, school)
-            if (fetched) {
-              const adjusted = { ...fetched }
-              PRAYERS.forEach(p => {
-                const offset = offsets[`${p}_offset` as keyof typeof offsets] || 0
-                if (offset !== 0) {
-                  const [h, m] = adjusted[p].split(':').map(Number)
-                  const totalMin = h * 60 + m + offset
-                  const newH = Math.floor(totalMin / 60) % 24
-                  const newM = totalMin % 60
-                  adjusted[p] = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
-                }
-              })
-              setTimes(adjusted)
+      // 1. Check LocalStorage for saved coordinates to avoid re-prompting
+      const savedLat = localStorage.getItem('miqat_lat')
+      const savedLng = localStorage.getItem('miqat_lng')
+
+      const fetchTimes = async (lat: number, lng: number) => {
+        const fetched = await getPrayerTimes(lat, lng, today, method, school)
+        if (fetched) {
+          const adjusted = { ...fetched }
+          PRAYERS.forEach(p => {
+            const offset = offsets[`${p}_offset` as keyof typeof offsets] || 0
+            if (offset !== 0) {
+              const [h, m] = adjusted[p].split(':').map(Number)
+              const totalMin = h * 60 + m + offset
+              const newH = Math.floor(totalMin / 60) % 24
+              const newM = totalMin % 60
+              adjusted[p] = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
             }
-            setLoading(false)
-          },
-          async () => {
-            const fallback = await getPrayerTimes(19.0760, 72.8777, today, method, school)
-            if (fallback) setTimes(fallback)
-            setLoading(false)
-          }
-        )
-      } else setLoading(false)
+          })
+          setTimes(adjusted)
+        }
+        setLoading(false)
+      }
+
+      if (savedLat && savedLng) {
+        // If we already have coordinates saved, skip the prompt!
+        fetchTimes(parseFloat(savedLat), parseFloat(savedLng))
+      } else {
+        // First time visiting: Ask for location
+        if ('geolocation' in navigator) {
+          navigator.geolocation.getCurrentPosition(
+            async (position) => {
+              const { latitude, longitude } = position.coords
+              localStorage.setItem('miqat_lat', latitude.toString())
+              localStorage.setItem('miqat_lng', longitude.toString())
+              fetchTimes(latitude, longitude)
+            },
+            async () => {
+              // If blocked, fallback to Mumbai but don't save it, so we can ask next time they visit
+              fetchTimes(19.0760, 72.8777)
+            }
+          )
+        } else {
+          fetchTimes(19.0760, 72.8777)
+        }
+      }
     }
 
     loadData()
@@ -307,6 +324,7 @@ export default function Dashboard() {
         <NavBar />
 
         <main className="mt-8 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_320px]">
+          {/* ... (Rest of the Dashboard UI remains exactly the same as before) ... */}
           <section>
             <div className="mb-8">
               <p className="kicker mb-2">TODAY</p>
@@ -475,7 +493,6 @@ export default function Dashboard() {
           </aside>
         </main>
 
-        {/* MODAL */}
         {selectedPrayer && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4 py-6 overflow-y-auto">
             <div className="bg-[var(--surface)] w-full max-w-md border border-[var(--line)] rounded-2xl shadow-2xl p-6 sm:p-8 my-auto">
