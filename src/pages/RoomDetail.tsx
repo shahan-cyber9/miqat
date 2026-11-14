@@ -18,7 +18,6 @@ export default function RoomDetail() {
   const [isPaying, setIsPaying] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  // Extract fetching logic so we can reuse it after marking as paid
   const fetchRoomData = async () => {
     if (!user || !roomId) return
 
@@ -55,7 +54,7 @@ export default function RoomDetail() {
           const { data } = await supabase.storage
             .from('prayer_photos')
             .createSignedUrl(todayRecord.photo_path, 3600, {
-              transform: { width: 300, height: 300, resize: 'cover' } // Added compression here to save egress!
+              transform: { width: 300, height: 300, resize: 'cover' }
             })
           if (data) signedUrl = data.signedUrl
         }
@@ -104,12 +103,15 @@ export default function RoomDetail() {
     setIsPaying(true)
 
     // Update all unpaid penalties for this user in this room
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('room_penalties')
       .update({ paid: true })
       .eq('room_id', roomId)
       .eq('user_id', user.id)
       .eq('paid', false)
+      .select() // <--- CRITICAL: This tells us what was updated
+
+    console.log("Update Result:", data, error) // <--- Debugging
 
     if (error) {
       alert(`Error updating: ${error.message}`)
