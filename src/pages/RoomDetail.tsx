@@ -15,62 +15,66 @@ export default function RoomDetail() {
   const [room, setRoom] = useState<Room | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
+  const [isPaying, setIsPaying] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  useEffect(() => {
-    async function fetchRoomData() {
-      if (!user || !roomId) return
+  // Extract fetching logic so we can reuse it after marking as paid
+  const fetchRoomData = async () => {
+    if (!user || !roomId) return
 
-      // 1. Fetch Room details
-      const { data: roomData } = await supabase.from('rooms').select('*').eq('id', roomId).single()
-      if (roomData) setRoom(roomData)
+    // 1. Fetch Room details
+    const { data: roomData } = await supabase.from('rooms').select('*').eq('id', roomId).single()
+    if (roomData) setRoom(roomData)
 
-      // 2. Fetch Members
-      const { data: memberData } = await supabase.from('room_members').select('user_id').eq('room_id', roomId)
+    // 2. Fetch Members
+    const { data: memberData } = await supabase.from('room_members').select('user_id').eq('room_id', roomId)
 
-      if (memberData) {
-        // 3. Fetch Penalties
-        const { data: penaltyData } = await supabase.from('room_penalties').select('user_id, amount, paid').eq('room_id', roomId)
+    if (memberData) {
+      // 3. Fetch Penalties
+      const { data: penaltyData } = await supabase.from('room_penalties').select('user_id, amount, paid').eq('room_id', roomId)
 
-        // 4. Fetch Today's Prayer Records (for Proofs)
-        const todayStr = new Date().toLocaleDateString('en-CA')
-        const memberIds = memberData.map(m => m.user_id)
+      // 4. Fetch Today's Prayer Records (for Proofs)
+      const todayStr = new Date().toLocaleDateString('en-CA')
+      const memberIds = memberData.map(m => m.user_id)
+      
+      const { data: recordsData } = await supabase
+        .from('prayer_records')
+        .select('user_id, photo_path, status, prayer_name')
+        .in('user_id', memberIds)
+        .eq('prayer_date', todayStr)
+
+      // Process members and generate Signed URLs for photos
+      const mappedMembers = await Promise.all(memberData.map(async (m) => {
+        const memberPenalties = penaltyData?.filter(p => p.user_id === m.user_id && !p.paid) || []
+        const totalOwed = memberPenalties.reduce((sum, p) => sum + p.amount, 0)
         
-        const { data: recordsData } = await supabase
-          .from('prayer_records')
-          .select('user_id, photo_path, status, prayer_name')
-          .in('user_id', memberIds)
-          .eq('prayer_date', todayStr)
+        const todayRecord = recordsData?.find(r => r.user_id === m.user_id && r.photo_path)
+        let signedUrl = null
+        
+        if (todayRecord && todayRecord.photo_path) {
+          const { data } = await supabase.storage
+            .from('prayer_photos')
+            .createSignedUrl(todayRecord.photo_path, 3600, {
+              transform: { width: 300, height: 300, resize: 'cover' } // Added compression here to save egress!
+            })
+          if (data) signedUrl = data.signedUrl
+        }
 
-        // Process members and generate Signed URLs for photos
-        const mappedMembers = await Promise.all(memberData.map(async (m) => {
-          const memberPenalties = penaltyData?.filter(p => p.user_id === m.user_id && !p.paid) || []
-          const totalOwed = memberPenalties.reduce((sum, p) => sum + p.amount, 0)
-          
-          // Find today's record with a photo (look at Fajr for proof as an example)
-          const todayRecord = recordsData?.find(r => r.user_id === m.user_id && r.photo_path)
-          let signedUrl = null
-          
-          if (todayRecord && todayRecord.photo_path) {
-            const { data } = await supabase.storage
-              .from('prayer_photos')
-              .createSignedUrl(todayRecord.photo_path, 3600) // Valid for 1 hour
-            if (data) signedUrl = data.signedUrl
-          }
+        return {
+          user_id: m.user_id,
+          email: m.user_id === user.id ? 'You' : `Member ${m.user_id.slice(0, 4)}`,
+          total_owed: totalOwed,
+          today_photo: signedUrl,
+          status: todayRecord ? todayRecord.status : 'Not logged'
+        }
+      }))
 
-          return {
-            user_id: m.user_id,
-            email: m.user_id === user.id ? 'You' : `Member ${m.user_id.slice(0, 4)}`,
-            total_owed: totalOwed,
-            today_photo: signedUrl,
-            status: todayRecord ? todayRecord.status : 'Not logged'
-          }
-        }))
-
-        setMembers(mappedMembers)
-      }
-      setLoading(false)
+      setMembers(mappedMembers)
     }
+    setLoading(false)
+  }
+
+  useEffect(() => {
     fetchRoomData()
   }, [roomId, user])
 
@@ -88,8 +92,41 @@ export default function RoomDetail() {
     navigate('/rooms')
   }
 
+  const handleMarkAsPaid = async () => {
+    if (!user || !roomId) return
+    
+    const myData = members.find(m => m.user_id === user.id)
+    if (!myData || myData.total_owed === 0) return
+
+    const confirmPay = window.confirm(`Have you paid ₹${myData.total_owed} to charity? Clicking OK will clear your pot.`)
+    if (!confirmPay) return
+
+    setIsPaying(true)
+
+    // Update all unpaid penalties for this user in this room
+    const { error } = await supabase
+      .from('room_penalties')
+      .update({ paid: true })
+      .eq('room_id', roomId)
+      .eq('user_id', user.id)
+      .eq('paid', false)
+
+    if (error) {
+      alert(`Error updating: ${error.message}`)
+    } else {
+      // Re-fetch data to update the UI automatically
+      await fetchRoomData()
+    }
+    
+    setIsPaying(false)
+  }
+
   if (loading) return <div className="p-8 font-mono text-sm">LOADING ROOM...</div>
   if (!room) return <div className="p-8 font-mono text-sm">ROOM NOT FOUND.</div>
+
+  // Calculate my specific total to show on the button
+  const myData = members.find(m => m.user_id === user?.id)
+  const myTotalOwed = myData?.total_owed || 0
 
   return (
     <div className="mx-auto max-w-[1120px] px-6 pt-8 pb-24">
@@ -104,10 +141,10 @@ export default function RoomDetail() {
           </div>
           
           <div className="flex gap-2">
-            <button onClick={handleLeaveRoom} className="border border-[var(--st-missed)] text-[var(--st-missed)] px-4 py-2 font-mono text-xs uppercase tracking-widest hover:bg-[var(--st-missed)]/10 transition-colors">
+            <button onClick={handleLeaveRoom} className="border border-[var(--st-missed)] text-[var(--st-missed)] px-4 py-2 font-mono text-xs uppercase tracking-widest hover:bg-[var(--st-missed)]/10 transition-colors rounded-lg">
               LEAVE ROOM
             </button>
-            <button onClick={copyInviteLink} className="border border-[var(--line-strong)] text-[var(--ink)] px-4 py-2 font-mono text-xs uppercase tracking-widest hover:bg-[var(--surface)] transition-colors">
+            <button onClick={copyInviteLink} className="border border-[var(--line-strong)] text-[var(--ink)] px-4 py-2 font-mono text-xs uppercase tracking-widest hover:bg-[var(--surface)] transition-colors rounded-lg">
               {copied ? 'COPIED!' : 'INVITE FRIEND'}
             </button>
           </div>
@@ -121,14 +158,16 @@ export default function RoomDetail() {
           <h2 className="font-display text-2xl mb-4">Members & Today's Proof</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {members.map(member => (
-              <div key={member.user_id} className="flex flex-col border border-[var(--line)] bg-[var(--surface)] p-4 rounded-xl">
+              <div key={member.user_id} className="flex flex-col border border-[var(--line)] bg-[var(--surface)] p-4 rounded-xl shadow-sm">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <span className="font-display text-lg block">{member.email}</span>
                     <span className="kicker text-[10px] text-[var(--ink-2)]">{member.status.toUpperCase()}</span>
                   </div>
                   <div className="text-right">
-                    <p className="font-mono text-sm text-[var(--st-missed)]">₹{member.total_owed}</p>
+                    <p className={`font-mono text-sm ${member.total_owed > 0 ? 'text-[var(--st-missed)]' : 'text-[var(--st-on-time)]'}`}>
+                      ₹{member.total_owed}
+                    </p>
                     <p className="kicker text-[10px] text-[var(--ink-2)]">SADAQAH</p>
                   </div>
                 </div>
@@ -174,8 +213,12 @@ export default function RoomDetail() {
             </div>
           </div>
           
-          <button className="w-full border border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)] py-3 mt-8 rounded-lg font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all">
-            MARK MY POT AS PAID
+          <button 
+            onClick={handleMarkAsPaid}
+            disabled={isPaying || myTotalOwed === 0}
+            className="w-full border border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)] py-3 mt-8 rounded-lg font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPaying ? 'UPDATING...' : myTotalOwed === 0 ? 'NO DUES PENDING' : 'MARK MY POT AS PAID'}
           </button>
         </aside>
       </div>
