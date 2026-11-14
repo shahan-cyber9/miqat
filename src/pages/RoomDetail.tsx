@@ -51,6 +51,7 @@ export default function RoomDetail() {
         let signedUrl = null
         
         if (todayRecord && todayRecord.photo_path) {
+          // PHASE 2 OPTIMIZATION: Transform the image to a 300x300 WebP thumbnail
           const { data } = await supabase.storage
             .from('prayer_photos')
             .createSignedUrl(todayRecord.photo_path, 3600, {
@@ -109,9 +110,9 @@ export default function RoomDetail() {
       .eq('room_id', roomId)
       .eq('user_id', user.id)
       .eq('paid', false)
-      .select() // <--- CRITICAL: This tells us what was updated
+      .select() 
 
-    console.log("Update Result:", data, error) // <--- Debugging
+    console.log("Update Result:", data, error) 
 
     if (error) {
       alert(`Error updating: ${error.message}`)

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
 import NavBar from '../components/NavBar'
 import Footer from '../components/Footer'
+import imageCompression from 'browser-image-compression'
 
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
@@ -137,7 +138,7 @@ export default function Dashboard() {
         setWeekData(weekGrid)
       }
 
-      // 1. Check LocalStorage for saved coordinates to avoid re-prompting
+      //Avoid Reprompting
       const savedLat = localStorage.getItem('miqat_lat')
       const savedLng = localStorage.getItem('miqat_lng')
 
@@ -244,10 +245,15 @@ export default function Dashboard() {
     let photoPath = records[selectedPrayer]?.photo_path || null
 
     try {
-      if (photoFile) {
-        const fileExt = photoFile.name.split('.').pop()
+            if (photoFile) {
+        // Compress the image before uploading
+        const options = { maxSizeMB: 0.5, maxWidthOrHeight: 800, useWebWorker: true }
+        const compressedFile = await imageCompression(photoFile, options)
+        
+        const fileExt = compressedFile.name.split('.').pop()
         const fileName = `${user.id}/${selectedPrayer}_${todayStr}_${Date.now()}.${fileExt}`
-        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, photoFile)
+        
+        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, compressedFile)
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
         photoPath = fileName
       }
