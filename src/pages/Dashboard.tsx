@@ -50,7 +50,7 @@ export default function Dashboard() {
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
-  // FIXED LOGIC: Determine the currently active prayer window based on time
+  // REVISED LOGIC: Handles the midnight crossover perfectly
   const getHighlightedPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
@@ -62,25 +62,29 @@ export default function Dashboard() {
     })
 
     // 1. Figure out which window we are currently in
-    let activeWindow = 'isha'
-    if (currentTime < timeMap.fajr) activeWindow = 'isha' // Before Fajr, still in Isha window
-    else if (currentTime < timeMap.dhuhr) activeWindow = 'fajr'
-    else if (currentTime < timeMap.asr) activeWindow = 'dhuhr'
-    else if (currentTime < timeMap.maghrib) activeWindow = 'asr'
-    else if (currentTime < timeMap.isha) activeWindow = 'maghrib'
+    let currentWindow = 'isha'
+    if (currentTime < timeMap.fajr) {
+      // Special case: It's past midnight but before Fajr. 
+      // The actual "next" prayer coming up is Fajr.
+      return 'fajr'
+    }
+    else if (currentTime < timeMap.dhuhr) currentWindow = 'fajr'
+    else if (currentTime < timeMap.asr) currentWindow = 'dhuhr'
+    else if (currentTime < timeMap.maghrib) currentWindow = 'asr'
+    else if (currentTime < timeMap.isha) currentWindow = 'maghrib'
 
-    // 2. If the active window is NOT logged, highlight it
-    if (!records[activeWindow]?.status) {
-      return activeWindow
+    // 2. If the current window is NOT logged, highlight it
+    if (!records[currentWindow]?.status) {
+      return currentWindow
     }
 
-    // 3. If the active window IS logged, find the next unlogged prayer forward in time
-    const activeIndex = PRAYERS.indexOf(activeWindow as any)
+    // 3. If the current window IS logged, find the next unlogged prayer forward in time
+    const activeIndex = PRAYERS.indexOf(currentWindow as any)
     for (let i = activeIndex + 1; i < PRAYERS.length; i++) {
       if (!records[PRAYERS[i]]?.status) return PRAYERS[i]
     }
 
-    // 4. If everything from now until Isha is logged, point to tomorrow's Fajr
+    // 4. If everything is logged, point to tomorrow's Fajr
     return 'fajr'
   }
 
