@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
@@ -32,6 +32,7 @@ export default function Dashboard() {
   const [times, setTimes] = useState<PrayerTimes | null>(null)
   const [loading, setLoading] = useState(true)
   const [consistency, setConsistency] = useState<number | null>(null)
+  const [countdown, setCountdown] = useState<string>('')
   
   const [weekData, setWeekData] = useState<Record<string, Record<string, string>>>({})
   const [reflection, setReflection] = useState('')
@@ -46,11 +47,14 @@ export default function Dashboard() {
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
+  // Long-press refs
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isLongPress = useRef(false)
+
   const today = new Date()
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
-  // REVISED LOGIC: Handles the midnight crossover perfectly
   const getHighlightedPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
@@ -61,11 +65,8 @@ export default function Dashboard() {
       timeMap[p] = h * 60 + m
     })
 
-    // 1. Figure out which window we are currently in
     let currentWindow = 'isha'
     if (currentTime < timeMap.fajr) {
-      // Special case: It's past midnight but before Fajr. 
-      // The actual "next" prayer coming up is Fajr.
       return 'fajr'
     }
     else if (currentTime < timeMap.dhuhr) currentWindow = 'fajr'
@@ -73,22 +74,57 @@ export default function Dashboard() {
     else if (currentTime < timeMap.maghrib) currentWindow = 'asr'
     else if (currentTime < timeMap.isha) currentWindow = 'maghrib'
 
-    // 2. If the current window is NOT logged, highlight it
-    if (!records[currentWindow]?.status) {
-      return currentWindow
-    }
+    if (!records[currentWindow]?.status) return currentWindow
 
-    // 3. If the current window IS logged, find the next unlogged prayer forward in time
     const activeIndex = PRAYERS.indexOf(currentWindow as any)
     for (let i = activeIndex + 1; i < PRAYERS.length; i++) {
       if (!records[PRAYERS[i]]?.status) return PRAYERS[i]
     }
-
-    // 4. If everything is logged, point to tomorrow's Fajr
     return 'fajr'
   }
 
   const highlightedPrayer = getHighlightedPrayer()
+
+  // DYNAMIC COMPANION TEXT
+  const getCompanionGreeting = () => {
+    if (!highlightedPrayer) return "Welcome back."
+    switch (highlightedPrayer) {
+      case 'fajr': return "The best time to rise. Fajr is waiting."
+      case 'dhuhr': return "Pause. Breathe. Pray."
+      case 'asr': return "A moment of mercy in the afternoon."
+      case 'maghrib': return "Sunset. A time to return."
+      case 'isha': return "Peace at the end of the day."
+      default: return "Welcome back."
+    }
+  }
+
+  // LIVE COUNTDOWN LOGIC
+  useEffect(() => {
+    if (!times || !highlightedPrayer) return
+
+    const interval = setInterval(() => {
+      const now = new Date()
+      const [h, m] = times[highlightedPrayer as keyof PrayerTimes].split(':').map(Number)
+      
+      const target = new Date()
+      target.setHours(h, m, 0, 0)
+      
+      // If the target time has passed today, it's tomorrow
+      if (target.getTime() < now.getTime()) {
+        target.setDate(target.getDate() + 1)
+      }
+
+      const diff = target.getTime() - now.getTime()
+      
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+      
+      setCountdown(`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`)
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [times, highlightedPrayer])
 
   useEffect(() => {
     if (highlightedPrayer) setReflectionWindow(highlightedPrayer)
@@ -262,51 +298,58 @@ export default function Dashboard() {
     }
   }
 
-  const savePrayer = async () => {
-    if (!user || !selectedPrayer) return
+  // Core save logic reused by both the modal and quick log
+  const executeSave = async (prayerName: string, status: string, timeStr: string, file: File | null) => {
+    if (!user) return
     setIsSaving(true)
-    const isoString = new Date(`${todayStr}T${prayerTime}:00`).toISOString()
-    let photoPath = records[selectedPrayer]?.photo_path || null
+    const isoString = new Date(`${todayStr}T${timeStr}:00`).toISOString()
+    let photoPath = records[prayerName]?.photo_path || null
 
     try {
-      if (photoFile) {
-        const fileExt = photoFile.name.split('.').pop()
-        const fileName = `${user.id}/${selectedPrayer}_${todayStr}_${Date.now()}.${fileExt}`
-        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, photoFile)
+      if (file) {
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${user.id}/${prayerName}_${todayStr}_${Date.now()}.${fileExt}`
+        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, file)
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
         photoPath = fileName
       }
 
       const { error } = await supabase.from('prayer_records').upsert({ 
-        user_id: user.id, prayer_date: todayStr, prayer_name: selectedPrayer, status: selectedStatus,
+        user_id: user.id, prayer_date: todayStr, prayer_name: prayerName, status: status,
         prayed_at: isoString, timezone_at_log: Intl.DateTimeFormat().resolvedOptions().timeZone, 
         calculation_method: 1, photo_path: photoPath
       }, { onConflict: 'user_id,prayer_date,prayer_name' })
 
       if (error) throw new Error(`Database save failed: ${error.message}`)
 
-      setRecords({ ...records, [selectedPrayer]: { status: selectedStatus, prayed_at: isoString, photo_path: photoPath } })
+      setRecords({ ...records, [prayerName]: { status: status, prayed_at: isoString, photo_path: photoPath } })
 
-      if (selectedStatus === 'late' || selectedStatus === 'missed' || selectedStatus === 'qadha') {
+      if (status === 'late' || status === 'missed' || status === 'qadha') {
         const { data: memberships } = await supabase.from('room_members').select('room_id, rooms(penalty_late, penalty_missed, penalty_qadha)').eq('user_id', user.id)
         if (memberships && memberships.length > 0) {
           const penaltiesToInsert = memberships.map((m: any) => {
             let amount = 0
-            if (selectedStatus === 'late') amount = m.rooms.penalty_late
-            if (selectedStatus === 'missed') amount = m.rooms.penalty_missed
-            if (selectedStatus === 'qadha') amount = m.rooms.penalty_qadha
-            return { room_id: m.room_id, user_id: user.id, amount, reason: selectedStatus, prayer_date: todayStr }
+            if (status === 'late') amount = m.rooms.penalty_late
+            if (status === 'missed') amount = m.rooms.penalty_missed
+            if (status === 'qadha') amount = m.rooms.penalty_qadha
+            return { room_id: m.room_id, user_id: user.id, amount, reason: status, prayer_date: todayStr }
           })
           await supabase.from('room_penalties').insert(penaltiesToInsert)
         }
       }
-
-      setSelectedPrayer(null) 
+      return true
     } catch (err: any) {
       alert(err.message || "Something went wrong.")
+      return false
     } finally {
       setIsSaving(false)
     }
+  }
+
+  const savePrayer = async () => {
+    if (!selectedPrayer) return
+    const success = await executeSave(selectedPrayer, selectedStatus, prayerTime, photoFile)
+    if (success) setSelectedPrayer(null)
   }
 
   const clearPrayer = async () => {
@@ -318,6 +361,34 @@ export default function Dashboard() {
     setRecords(newRecords)
     setSelectedPrayer(null)
     setIsSaving(false)
+  }
+
+  // QUICK LOG (Long Press)
+  const quickLog = async (prayerName: string) => {
+    if (records[prayerName]) return // Already logged
+    const now = new Date()
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    await executeSave(prayerName, 'on_time', timeStr, null)
+  }
+
+  const handlePressStart = (prayerName: string) => {
+    isLongPress.current = false
+    pressTimer.current = setTimeout(() => {
+      isLongPress.current = true
+      quickLog(prayerName)
+    }, 600) // 600ms hold
+  }
+
+  const handlePressEnd = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current)
+  }
+
+  const handleRowClick = (prayerName: string) => {
+    if (isLongPress.current) {
+      isLongPress.current = false
+      return
+    }
+    openModal(prayerName)
   }
 
   const formatTime = (isoString?: string | null) => {
@@ -355,8 +426,9 @@ export default function Dashboard() {
               <h1 className="font-display m-0 text-3xl sm:text-4xl font-normal">
                 {today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
               </h1>
-              <p className="font-display text-sm italic text-[var(--ink-2)] mt-2">
-                "Indeed, prayer prohibits immorality and wrongdoing." (Quran 29:45)
+              {/* DYNAMIC COMPANION TEXT */}
+              <p className="font-display text-lg italic text-[var(--accent)] mt-2">
+                {getCompanionGreeting()}
               </p>
             </div>
 
@@ -388,8 +460,17 @@ export default function Dashboard() {
                   return (
                     <div 
                       key={prayer} 
-                      onClick={() => openModal(prayer)}
-                      className={`group flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 border border-[var(--line)] rounded-xl py-4 px-4 sm:px-5 transition-all cursor-pointer ${
+                      onMouseDown={() => handlePressStart(prayer)}
+                      onMouseUp={handlePressEnd}
+                      onMouseLeave={handlePressEnd}
+                      onTouchStart={() => handlePressStart(prayer)}
+                      onTouchEnd={handlePressEnd}
+                      onClick={() => handleRowClick(prayer)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        if (!records[prayer]) quickLog(prayer)
+                      }}
+                      className={`group flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 border border-[var(--line)] rounded-xl py-4 px-4 sm:px-5 transition-all cursor-pointer select-none ${
                         isUpNext ? 'bg-[var(--accent)]/5 border-[var(--accent)]/30 shadow-sm' : 'bg-[var(--surface)] hover:bg-[var(--line)]/20 border-transparent'
                       }`}
                     >
@@ -416,15 +497,29 @@ export default function Dashboard() {
                         {record?.photo_path && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--st-on-time)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                         )}
-                        <span className={`kicker w-24 text-right ${isUpNext ? 'text-[var(--accent)]' : status === 'empty' ? 'text-[var(--st-empty)]' : ''}`} style={status !== 'empty' && !isUpNext ? { color: `var(--st-${status.replace('_', '-')})` } : {}}>
-                          {isUpNext ? 'UP NEXT' : status === 'empty' ? 'NOT LOGGED' : status.replace('_', ' ').toUpperCase()}
-                        </span>
+                        {/* LIVE COUNTDOWN */}
+                        {isUpNext ? (
+                          <div className="flex flex-col items-end">
+                            <span className="kicker text-[10px] text-[var(--accent)] font-bold">UP NEXT</span>
+                            <span className="font-mono text-xs text-[var(--accent)]">{countdown}</span>
+                          </div>
+                        ) : status === 'empty' ? (
+                          <span className="kicker w-24 text-right text-[var(--st-empty)]">NOT LOGGED</span>
+                        ) : (
+                          <span className="kicker w-24 text-right" style={{ color: `var(--st-${status.replace('_', '-')})` }}>
+                            {status.replace('_', ' ').toUpperCase()}
+                          </span>
+                        )}
                       </div>
                     </div>
                   )
                 })}
               </div>
             )}
+
+            <p className="text-center kicker text-[10px] text-[var(--ink-2)] mb-8">
+              Tip: Tap to open details. Press & hold (or right-click) to instantly mark as On Time.
+            </p>
 
             {!loading && (
               <div className="border border-[var(--line)] bg-[var(--surface)] rounded-xl p-6 shadow-sm">
