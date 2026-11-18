@@ -4,7 +4,6 @@ import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
 import NavBar from '../components/NavBar'
 import Footer from '../components/Footer'
-import imageCompression from 'browser-image-compression'
 
 function PrayerMarker({ name, active }: { name: string; active: boolean }) {
   const stroke = active ? 'currentColor' : 'var(--ink-2)'
@@ -51,12 +50,37 @@ export default function Dashboard() {
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
+  // FIXED LOGIC: Determine the currently active prayer window based on time
   const getHighlightedPrayer = () => {
-    for (let i = 0; i < PRAYERS.length; i++) {
-      if (!records[PRAYERS[i]]?.status) {
-        return PRAYERS[i]
-      }
+    if (!times) return null
+    const currentTime = today.getHours() * 60 + today.getMinutes()
+    
+    const timeMap: Record<string, number> = {}
+    PRAYERS.forEach(p => {
+      const [h, m] = times[p].split(':').map(Number)
+      timeMap[p] = h * 60 + m
+    })
+
+    // 1. Figure out which window we are currently in
+    let activeWindow = 'isha'
+    if (currentTime < timeMap.fajr) activeWindow = 'isha' // Before Fajr, still in Isha window
+    else if (currentTime < timeMap.dhuhr) activeWindow = 'fajr'
+    else if (currentTime < timeMap.asr) activeWindow = 'dhuhr'
+    else if (currentTime < timeMap.maghrib) activeWindow = 'asr'
+    else if (currentTime < timeMap.isha) activeWindow = 'maghrib'
+
+    // 2. If the active window is NOT logged, highlight it
+    if (!records[activeWindow]?.status) {
+      return activeWindow
     }
+
+    // 3. If the active window IS logged, find the next unlogged prayer forward in time
+    const activeIndex = PRAYERS.indexOf(activeWindow as any)
+    for (let i = activeIndex + 1; i < PRAYERS.length; i++) {
+      if (!records[PRAYERS[i]]?.status) return PRAYERS[i]
+    }
+
+    // 4. If everything from now until Isha is logged, point to tomorrow's Fajr
     return 'fajr'
   }
 
@@ -138,7 +162,6 @@ export default function Dashboard() {
         setWeekData(weekGrid)
       }
 
-      //Avoid Reprompting
       const savedLat = localStorage.getItem('miqat_lat')
       const savedLng = localStorage.getItem('miqat_lng')
 
@@ -162,10 +185,8 @@ export default function Dashboard() {
       }
 
       if (savedLat && savedLng) {
-        // If we already have coordinates saved, skip the prompt!
         fetchTimes(parseFloat(savedLat), parseFloat(savedLng))
       } else {
-        // First time visiting: Ask for location
         if ('geolocation' in navigator) {
           navigator.geolocation.getCurrentPosition(
             async (position) => {
@@ -175,7 +196,6 @@ export default function Dashboard() {
               fetchTimes(latitude, longitude)
             },
             async () => {
-              // If blocked, fallback to Mumbai but don't save it, so we can ask next time they visit
               fetchTimes(19.0760, 72.8777)
             }
           )
@@ -245,15 +265,10 @@ export default function Dashboard() {
     let photoPath = records[selectedPrayer]?.photo_path || null
 
     try {
-            if (photoFile) {
-        // Compress the image before uploading
-        const options = { maxSizeMB: 0.5, maxWidthOrHeight: 800, useWebWorker: true }
-        const compressedFile = await imageCompression(photoFile, options)
-        
-        const fileExt = compressedFile.name.split('.').pop()
+      if (photoFile) {
+        const fileExt = photoFile.name.split('.').pop()
         const fileName = `${user.id}/${selectedPrayer}_${todayStr}_${Date.now()}.${fileExt}`
-        
-        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, compressedFile)
+        const { error: uploadError } = await supabase.storage.from('prayer_photos').upload(fileName, photoFile)
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
         photoPath = fileName
       }
@@ -330,7 +345,6 @@ export default function Dashboard() {
         <NavBar />
 
         <main className="mt-8 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_320px]">
-          {/* ... (Rest of the Dashboard UI remains exactly the same as before) ... */}
           <section>
             <div className="mb-8">
               <p className="kicker mb-2">TODAY</p>
@@ -408,7 +422,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* WEEK LEDGER WITH LEGEND */}
             {!loading && (
               <div className="border border-[var(--line)] bg-[var(--surface)] rounded-xl p-6 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
