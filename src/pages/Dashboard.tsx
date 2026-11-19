@@ -79,11 +79,11 @@ export default function Dashboard() {
     const currentTime = today.getHours() * 60 + today.getMinutes()
     const nextP = getNextPrayer()
     
-    // If the next prayer is within 30 minutes, highlight IT, not the missed prayer
+    // If the next prayer is within 45 minutes, highlight IT, not the missed prayer
     if (nextP) {
       const [h, m] = times[nextP].split(':').map(Number)
       const timeUntilNext = (h * 60 + m) - currentTime
-      if (timeUntilNext <= 30 && timeUntilNext >= 0) {
+      if (timeUntilNext <= 45 && timeUntilNext >= 0) {
         return nextP
       }
     }
@@ -418,7 +418,6 @@ export default function Dashboard() {
     await executeSave(prayerName, 'on_time', timeStr, null)
   }
 
-  // Handle Double Click
   const handleRowDoubleClick = (e: React.MouseEvent, prayerName: string) => {
     e.preventDefault()
     if (!records[prayerName]) quickLog(prayerName)
