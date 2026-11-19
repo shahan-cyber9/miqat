@@ -62,7 +62,6 @@ export default function Dashboard() {
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
-  // Get the absolute next prayer based on time (for the countdown)
   const getNextPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
@@ -70,16 +69,14 @@ export default function Dashboard() {
       const [h, m] = times[p].split(':').map(Number)
       if ((h * 60 + m) > currentTime) return p
     }
-    return 'fajr' // If we passed Isha, next is tomorrow's Fajr
+    return 'fajr'
   }
 
-  // Get the highlighted prayer for the UI
   const getHighlightedPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
     const nextP = getNextPrayer()
     
-    // If the next prayer is within 45 minutes, highlight IT, not the missed prayer
     if (nextP) {
       const [h, m] = times[nextP].split(':').map(Number)
       const timeUntilNext = (h * 60 + m) - currentTime
@@ -88,7 +85,6 @@ export default function Dashboard() {
       }
     }
 
-    // Otherwise, find the current window and see if it's unlogged
     let currentWindow = 'isha'
     if (currentTime < (Number(times.fajr.split(':')[0]) * 60 + Number(times.fajr.split(':')[1]))) {
       return 'fajr'
@@ -122,7 +118,6 @@ export default function Dashboard() {
     }
   }
 
-  // Countdown to the ACTUAL next prayer time
   useEffect(() => {
     if (!times || !nextPrayer) return
 
@@ -323,18 +318,8 @@ export default function Dashboard() {
     
     if (existing?.status) {
       setSelectedStatus(existing.status)
-    } else if (times) {
-      const iqamahTimeStr = applyOffset(times[prayerName as keyof PrayerTimes], iqamahOffsets[prayerName as keyof typeof iqamahOffsets])
-      const [iqH, iqM] = iqamahTimeStr.split(':').map(Number)
-      const currentTime = today.getHours() * 60 + today.getMinutes()
-      
-      if (currentTime > (iqH * 60 + iqM)) {
-        setSelectedStatus('late') 
-      } else {
-        setSelectedStatus('on_time')
-      }
     } else {
-      setSelectedStatus('on_time')
+      setSelectedStatus('on_time') 
     }
 
     setPhotoFile(null) 
@@ -343,7 +328,8 @@ export default function Dashboard() {
       const date = new Date(existing.prayed_at)
       setPrayerTime(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`)
     } else {
-      setPrayerTime(times ? times[prayerName as keyof PrayerTimes] : '12:00')
+      const now = new Date()
+      setPrayerTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`)
     }
   }
 
@@ -453,6 +439,19 @@ export default function Dashboard() {
       case 'maghrib': return "What would you like to return to tonight?"
       case 'isha': return "One sentence to close the day."
       default: return "A moment to reflect."
+    }
+  }
+
+  // Calculate if the selected time is after the Jamaat time for the warning
+  let isAfterJamaat = false
+  let jamaatTimeDisplay = ''
+  if (selectedPrayer && times) {
+    const iqamahTime = applyOffset(times[selectedPrayer as keyof PrayerTimes], iqamahOffsets[selectedPrayer as keyof typeof iqamahOffsets])
+    jamaatTimeDisplay = formatScheduledTime(iqamahTime)
+    const [iqH, iqM] = iqamahTime.split(':').map(Number)
+    const [prayH, prayM] = prayerTime.split(':').map(Number)
+    if ((prayH * 60 + prayM) > (iqH * 60 + iqM)) {
+      isAfterJamaat = true
     }
   }
 
@@ -689,7 +688,7 @@ export default function Dashboard() {
                   <h2 className="font-display text-3xl font-normal capitalize">{selectedPrayer}</h2>
                   {times && (
                     <p className="text-xs text-[var(--ink-2)] mt-1">
-                      Adhan: {formatScheduledTime(times[selectedPrayer as keyof PrayerTimes])} • Jamaat: {formatScheduledTime(applyOffset(times[selectedPrayer as keyof PrayerTimes], iqamahOffsets[selectedPrayer as keyof typeof iqamahOffsets]))}
+                      Adhan: {formatScheduledTime(times[selectedPrayer as keyof PrayerTimes])} • Jamaat: {jamaatTimeDisplay}
                     </p>
                   )}
                 </div>
@@ -719,6 +718,12 @@ export default function Dashboard() {
                   id="time" type="time" value={prayerTime} onChange={(e) => setPrayerTime(e.target.value)}
                   className="w-full border border-[var(--line)] rounded-xl bg-[var(--paper)] px-4 py-3 text-lg font-mono text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)] transition-all"
                 />
+                {/* VISUAL WARNING FOR JAMAAT */}
+                {isAfterJamaat && selectedStatus === 'on_time' && (
+                  <p className="text-xs text-[var(--st-late)] mt-2 font-medium bg-[var(--st-late)]/10 p-2 rounded-lg">
+                    You logged this after the Jamaat time. If you missed the congregation, change the status to Late.
+                  </p>
+                )}
               </div>
 
               <div className="mb-8">
