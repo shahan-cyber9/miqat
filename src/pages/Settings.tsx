@@ -3,35 +3,16 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
 import NavBar from '../components/NavBar'
-import Footer from '../components/Footer'
 
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
 
-// Convert 24h string (17:00) to 12h string (5:00 PM)
 const format12H = (time24: string) => {
   if (!time24) return ''
   const [h, m] = time24.split(':').map(Number)
   const ampm = h >= 12 ? 'PM' : 'AM'
   const h12 = h % 12 || 12
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
-}
-
-// Convert typed string (5:00 PM or 17:00) to 24h string (17:00)
-const parseTo24H = (timeStr: string) => {
-  const regex = /^(\d{1,2}):(\d{2})\s*(am|pm)?$/i
-  const match = timeStr.match(regex)
-  if (!match) return null // Invalid format
-  
-  let hours = parseInt(match[1])
-  const minutes = parseInt(match[2])
-  const ampm = match[3]?.toUpperCase()
-
-  if (ampm === 'PM' && hours < 12) hours += 12
-  if (ampm === 'AM' && hours === 12) hours = 0
-  
-  if (hours > 23 || minutes > 59) return null
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 const calculateOffset = (baseTime: string, targetTime: string) => {
@@ -64,9 +45,13 @@ export default function Settings() {
   const [school, setSchool] = useState(0)
   const [baseTimes, setBaseTimes] = useState<PrayerTimes | null>(null)
   
-  // Store as typed strings (e.g., "5:00 PM")
   const [targetTimes, setTargetTimes] = useState<PrayerTimes>({
-    fajr: '5:00 AM', dhuhr: '1:00 PM', asr: '4:00 PM', maghrib: '6:00 PM', isha: '8:00 PM'
+    fajr: '05:00', dhuhr: '13:00', asr: '16:00', maghrib: '18:00', isha: '20:00'
+  })
+
+  // New: Iqamah Offsets state (Default: Fajr 20m, Dhuhr 10m, Asr 10m, Maghrib 5m, Isha 10m)
+  const [iqamahOffsets, setIqamahOffsets] = useState({
+    fajr: 20, dhuhr: 10, asr: 10, maghrib: 5, isha: 10
   })
 
   useEffect(() => {
@@ -80,6 +65,17 @@ export default function Settings() {
       setMethod(savedMethod)
       setSchool(savedSchool)
 
+      // Load saved Iqamah offsets if they exist
+      if (data) {
+        setIqamahOffsets({
+          fajr: data.iqamah_fajr ?? 20,
+          dhuhr: data.iqamah_dhuhr ?? 10,
+          asr: data.iqamah_asr ?? 10,
+          maghrib: data.iqamah_maghrib ?? 5,
+          isha: data.iqamah_isha ?? 10,
+        })
+      }
+
       const fetchApiTimes = async (lat: number, lng: number) => {
         const fetched = await getPrayerTimes(lat, lng, new Date(), savedMethod, savedSchool)
         if (fetched) {
@@ -89,11 +85,11 @@ export default function Settings() {
             maghrib: data?.maghrib_offset || 0, isha: data?.isha_offset || 0,
           }
           setTargetTimes({
-            fajr: format12H(applyOffset(fetched.fajr, savedOffsets.fajr)),
-            dhuhr: format12H(applyOffset(fetched.dhuhr, savedOffsets.dhuhr)),
-            asr: format12H(applyOffset(fetched.asr, savedOffsets.asr)),
-            maghrib: format12H(applyOffset(fetched.maghrib, savedOffsets.maghrib)),
-            isha: format12H(applyOffset(fetched.isha, savedOffsets.isha)),
+            fajr: applyOffset(fetched.fajr, savedOffsets.fajr),
+            dhuhr: applyOffset(fetched.dhuhr, savedOffsets.dhuhr),
+            asr: applyOffset(fetched.asr, savedOffsets.asr),
+            maghrib: applyOffset(fetched.maghrib, savedOffsets.maghrib),
+            isha: applyOffset(fetched.isha, savedOffsets.isha),
           })
         }
         setLoading(false)
@@ -121,10 +117,7 @@ export default function Settings() {
             const fetched = await getPrayerTimes(pos.coords.latitude, pos.coords.longitude, new Date(), method, school)
             if (fetched) {
               setBaseTimes(fetched)
-              setTargetTimes({
-                fajr: format12H(fetched.fajr), dhuhr: format12H(fetched.dhuhr), asr: format12H(fetched.asr), 
-                maghrib: format12H(fetched.maghrib), isha: format12H(fetched.isha)
-              })
+              setTargetTimes(fetched)
             }
           }
         )
@@ -137,29 +130,21 @@ export default function Settings() {
     setTargetTimes({ ...targetTimes, [prayer]: value })
   }
 
+  const handleIqamahChange = (prayer: keyof typeof iqamahOffsets, value: string) => {
+    setIqamahOffsets({ ...iqamahOffsets, [prayer]: parseInt(value) || 0 })
+  }
+
   const handleSave = async () => {
     if (!user || !baseTimes) return
     setSaving(true)
     setMessage(null)
 
-    // Parse all 5 typed times into 24h format
-    const parsedTimes: Record<string, string> = {}
-    for (const p of PRAYERS) {
-      const parsed = parseTo24H(targetTimes[p])
-      if (!parsed) {
-        setMessage(`Invalid time format for ${p}. Please use e.g., "5:00 AM".`)
-        setSaving(false)
-        return
-      }
-      parsedTimes[p] = parsed
-    }
-
     const newOffsets = {
-      fajr: calculateOffset(baseTimes.fajr, parsedTimes.fajr),
-      dhuhr: calculateOffset(baseTimes.dhuhr, parsedTimes.dhuhr),
-      asr: calculateOffset(baseTimes.asr, parsedTimes.asr),
-      maghrib: calculateOffset(baseTimes.maghrib, parsedTimes.maghrib),
-      isha: calculateOffset(baseTimes.isha, parsedTimes.isha),
+      fajr: calculateOffset(baseTimes.fajr, targetTimes.fajr),
+      dhuhr: calculateOffset(baseTimes.dhuhr, targetTimes.dhuhr),
+      asr: calculateOffset(baseTimes.asr, targetTimes.asr),
+      maghrib: calculateOffset(baseTimes.maghrib, targetTimes.maghrib),
+      isha: calculateOffset(baseTimes.isha, targetTimes.isha),
     }
 
     const { error } = await supabase.from('prayer_preferences').upsert({
@@ -171,6 +156,12 @@ export default function Settings() {
       asr_offset: newOffsets.asr,
       maghrib_offset: newOffsets.maghrib,
       isha_offset: newOffsets.isha,
+      // Save Iqamah Offsets
+      iqamah_fajr: iqamahOffsets.fajr,
+      iqamah_dhuhr: iqamahOffsets.dhuhr,
+      iqamah_asr: iqamahOffsets.asr,
+      iqamah_maghrib: iqamahOffsets.maghrib,
+      iqamah_isha: iqamahOffsets.isha,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id' })
 
@@ -195,12 +186,9 @@ export default function Settings() {
           <p className="font-display text-sm italic text-[var(--ink-2)] mt-2">
             "Allah does not burden a soul beyond what it can bear." (Quran 2:286)
           </p>
-          <p className="mt-4 text-sm text-[var(--ink-2)] max-w-[50ch]">
-            Type your mosque's exact times (e.g., "5:30 AM"). We will calculate and save the differences.
-          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
           
           <section className="bg-[var(--surface)] border border-[var(--line)] rounded-xl p-6 shadow-sm">
             <h2 className="font-display text-2xl mb-4 border-b border-[var(--line)] pb-2">Calculation Base</h2>
@@ -249,21 +237,46 @@ export default function Settings() {
                       </span>
                     )}
                   </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="text" 
-                      value={targetTimes[prayer]} 
-                      onChange={(e) => handleTimeChange(prayer, e.target.value)}
-                      placeholder="e.g. 5:00 AM"
-                      className="w-[120px] border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
-                    />
-                  </div>
+                  <input 
+                    type="time" 
+                    value={targetTimes[prayer]} 
+                    onChange={(e) => handleTimeChange(prayer, e.target.value)}
+                    className="w-[120px] border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
+                  />
                 </div>
               ))}
             </div>
           </section>
         </div>
+
+        {/* NEW SECTION: IQAMAH OFFSETS */}
+        <section className="bg-[var(--surface)] border border-[var(--line)] rounded-xl p-6 shadow-sm mb-8">
+          <div className="flex justify-between items-start border-b border-[var(--line)] pb-2 mb-4">
+            <div>
+              <h2 className="font-display text-2xl">Iqamah (Jamaat) Offsets</h2>
+              <p className="text-xs text-[var(--ink-2)] mt-1">How many minutes after the Adhan does the congregation start?</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+            {PRAYERS.map(prayer => (
+              <div key={prayer} className="flex flex-col gap-2">
+                <label className="kicker capitalize block">{prayer}</label>
+                <div className="flex items-center gap-1">
+                  <input 
+                    type="number" 
+                    value={iqamahOffsets[prayer]} 
+                    onChange={(e) => handleIqamahChange(prayer, e.target.value)}
+                    className="w-full border border-[var(--line)] rounded-lg bg-[var(--paper)] px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-[var(--accent)]"
+                    min="0"
+                    max="60"
+                  />
+                  <span className="kicker text-[10px] text-[var(--ink-2)]">MIN</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="mt-8 pt-6 border-t border-[var(--line)] flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="kicker text-[var(--st-on-time)]">{message}</p>
@@ -276,7 +289,6 @@ export default function Settings() {
           </button>
         </div>
       </main>
-      <Footer />
     </div>
   )
 }

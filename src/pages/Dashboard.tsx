@@ -47,7 +47,6 @@ export default function Dashboard() {
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Long-press refs
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isLongPress = useRef(false)
 
@@ -85,7 +84,6 @@ export default function Dashboard() {
 
   const highlightedPrayer = getHighlightedPrayer()
 
-  // DYNAMIC COMPANION TEXT
   const getCompanionGreeting = () => {
     if (!highlightedPrayer) return "Welcome back."
     switch (highlightedPrayer) {
@@ -98,7 +96,6 @@ export default function Dashboard() {
     }
   }
 
-  // LIVE COUNTDOWN LOGIC
   useEffect(() => {
     if (!times || !highlightedPrayer) return
 
@@ -109,7 +106,6 @@ export default function Dashboard() {
       const target = new Date()
       target.setHours(h, m, 0, 0)
       
-      // If the target time has passed today, it's tomorrow
       if (target.getTime() < now.getTime()) {
         target.setDate(target.getDate() + 1)
       }
@@ -298,7 +294,6 @@ export default function Dashboard() {
     }
   }
 
-  // Core save logic reused by both the modal and quick log
   const executeSave = async (prayerName: string, status: string, timeStr: string, file: File | null) => {
     if (!user) return
     setIsSaving(true)
@@ -363,9 +358,8 @@ export default function Dashboard() {
     setIsSaving(false)
   }
 
-  // QUICK LOG (Long Press)
   const quickLog = async (prayerName: string) => {
-    if (records[prayerName]) return // Already logged
+    if (records[prayerName]) return 
     const now = new Date()
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     await executeSave(prayerName, 'on_time', timeStr, null)
@@ -376,7 +370,7 @@ export default function Dashboard() {
     pressTimer.current = setTimeout(() => {
       isLongPress.current = true
       quickLog(prayerName)
-    }, 600) // 600ms hold
+    }, 600)
   }
 
   const handlePressEnd = () => {
@@ -426,7 +420,6 @@ export default function Dashboard() {
               <h1 className="font-display m-0 text-3xl sm:text-4xl font-normal">
                 {today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
               </h1>
-              {/* DYNAMIC COMPANION TEXT */}
               <p className="font-display text-lg italic text-[var(--accent)] mt-2">
                 {getCompanionGreeting()}
               </p>
@@ -474,13 +467,20 @@ export default function Dashboard() {
                         isUpNext ? 'bg-[var(--accent)]/5 border-[var(--accent)]/30 shadow-sm' : 'bg-[var(--surface)] hover:bg-[var(--line)]/20 border-transparent'
                       }`}
                     >
-                      <div className="flex justify-between items-center sm:hidden">
+                      <div className="flex justify-between items-start sm:hidden">
                         <span className={`font-mono text-sm ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
                           {displayTime}
                         </span>
-                        <span className={`kicker text-[10px] ${isUpNext ? 'text-[var(--accent)]' : status === 'empty' ? 'text-[var(--st-empty)]' : ''}`} style={status !== 'empty' && !isUpNext ? { color: `var(--st-${status.replace('_', '-')})` } : {}}>
-                          {isUpNext ? 'UP NEXT' : status === 'empty' ? 'NOT LOGGED' : status.replace('_', ' ').toUpperCase()}
-                        </span>
+                        {isUpNext ? (
+                          <div className="flex flex-col items-end">
+                            <span className="kicker text-[10px] text-[var(--accent)] font-bold">UP NEXT</span>
+                            <span className="font-mono text-xs text-[var(--accent)] mt-0.5">{countdown}</span>
+                          </div>
+                        ) : (
+                          <span className={`kicker text-[10px] ${status === 'empty' ? 'text-[var(--st-empty)]' : ''}`} style={status !== 'empty' ? { color: `var(--st-${status.replace('_', '-')})` } : {}}>
+                            {status === 'empty' ? 'NOT LOGGED' : status.replace('_', ' ').toUpperCase()}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3 w-full sm:w-32">
@@ -497,7 +497,6 @@ export default function Dashboard() {
                         {record?.photo_path && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--st-on-time)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                         )}
-                        {/* LIVE COUNTDOWN */}
                         {isUpNext ? (
                           <div className="flex flex-col items-end">
                             <span className="kicker text-[10px] text-[var(--accent)] font-bold">UP NEXT</span>
