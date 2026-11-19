@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getPrayerTimes } from '../lib/al_adhan'
@@ -25,11 +25,22 @@ const STATUSES = ['on_time', 'late', 'qadha', 'missed'] as const
 type PrayerRecord = { status: string, prayed_at?: string | null, photo_path?: string | null }
 type PrayerTimes = { fajr: string, dhuhr: string, asr: string, maghrib: string, isha: string }
 
+const applyOffset = (baseTime: string, offset: number) => {
+  if (!baseTime) return '12:00'
+  const [h, m] = baseTime.split(':').map(Number)
+  const totalMin = h * 60 + m + offset
+  const newH = Math.floor(totalMin / 60) % 24
+  const newM = totalMin % 60
+  const finalH = newH < 0 ? newH + 24 : newH
+  return `${String(finalH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
+}
+
 export default function Dashboard() {
   const { user } = useAuth()
   
   const [records, setRecords] = useState<Record<string, PrayerRecord>>({})
   const [times, setTimes] = useState<PrayerTimes | null>(null)
+  const [iqamahOffsets, setIqamahOffsets] = useState({ fajr: 20, dhuhr: 10, asr: 10, maghrib: 5, isha: 10 })
   const [loading, setLoading] = useState(true)
   const [consistency, setConsistency] = useState<number | null>(null)
   const [countdown, setCountdown] = useState<string>('')
@@ -47,31 +58,45 @@ export default function Dashboard() {
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isLongPress = useRef(false)
-
   const today = new Date()
   const todayStr = today.toLocaleDateString('en-CA')
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA')
 
+  // Get the absolute next prayer based on time (for the countdown)
+  const getNextPrayer = () => {
+    if (!times) return null
+    const currentTime = today.getHours() * 60 + today.getMinutes()
+    for (const p of PRAYERS) {
+      const [h, m] = times[p].split(':').map(Number)
+      if ((h * 60 + m) > currentTime) return p
+    }
+    return 'fajr' // If we passed Isha, next is tomorrow's Fajr
+  }
+
+  // Get the highlighted prayer for the UI
   const getHighlightedPrayer = () => {
     if (!times) return null
     const currentTime = today.getHours() * 60 + today.getMinutes()
+    const nextP = getNextPrayer()
     
-    const timeMap: Record<string, number> = {}
-    PRAYERS.forEach(p => {
-      const [h, m] = times[p].split(':').map(Number)
-      timeMap[p] = h * 60 + m
-    })
+    // If the next prayer is within 30 minutes, highlight IT, not the missed prayer
+    if (nextP) {
+      const [h, m] = times[nextP].split(':').map(Number)
+      const timeUntilNext = (h * 60 + m) - currentTime
+      if (timeUntilNext <= 30 && timeUntilNext >= 0) {
+        return nextP
+      }
+    }
 
+    // Otherwise, find the current window and see if it's unlogged
     let currentWindow = 'isha'
-    if (currentTime < timeMap.fajr) {
+    if (currentTime < (Number(times.fajr.split(':')[0]) * 60 + Number(times.fajr.split(':')[1]))) {
       return 'fajr'
     }
-    else if (currentTime < timeMap.dhuhr) currentWindow = 'fajr'
-    else if (currentTime < timeMap.asr) currentWindow = 'dhuhr'
-    else if (currentTime < timeMap.maghrib) currentWindow = 'asr'
-    else if (currentTime < timeMap.isha) currentWindow = 'maghrib'
+    else if (currentTime < (Number(times.dhuhr.split(':')[0]) * 60 + Number(times.dhuhr.split(':')[1]))) currentWindow = 'fajr'
+    else if (currentTime < (Number(times.asr.split(':')[0]) * 60 + Number(times.asr.split(':')[1]))) currentWindow = 'dhuhr'
+    else if (currentTime < (Number(times.maghrib.split(':')[0]) * 60 + Number(times.maghrib.split(':')[1]))) currentWindow = 'asr'
+    else if (currentTime < (Number(times.isha.split(':')[0]) * 60 + Number(times.isha.split(':')[1]))) currentWindow = 'maghrib'
 
     if (!records[currentWindow]?.status) return currentWindow
 
@@ -83,6 +108,7 @@ export default function Dashboard() {
   }
 
   const highlightedPrayer = getHighlightedPrayer()
+  const nextPrayer = getNextPrayer()
 
   const getCompanionGreeting = () => {
     if (!highlightedPrayer) return "Welcome back."
@@ -96,12 +122,13 @@ export default function Dashboard() {
     }
   }
 
+  // Countdown to the ACTUAL next prayer time
   useEffect(() => {
-    if (!times || !highlightedPrayer) return
+    if (!times || !nextPrayer) return
 
     const interval = setInterval(() => {
       const now = new Date()
-      const [h, m] = times[highlightedPrayer as keyof PrayerTimes].split(':').map(Number)
+      const [h, m] = times[nextPrayer as keyof PrayerTimes].split(':').map(Number)
       
       const target = new Date()
       target.setHours(h, m, 0, 0)
@@ -120,7 +147,7 @@ export default function Dashboard() {
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [times, highlightedPrayer])
+  }, [times, nextPrayer])
 
   useEffect(() => {
     if (highlightedPrayer) setReflectionWindow(highlightedPrayer)
@@ -155,6 +182,16 @@ export default function Dashboard() {
       const method = prefs?.calculation_method || 1
       const school = prefs?.asr_school || 0
       const offsets = prefs || { fajr_offset: 0, dhuhr_offset: 0, asr_offset: 0, maghrib_offset: 0, isha_offset: 0 }
+
+      if (prefs) {
+        setIqamahOffsets({
+          fajr: prefs.iqamah_fajr ?? 20,
+          dhuhr: prefs.iqamah_dhuhr ?? 10,
+          asr: prefs.iqamah_asr ?? 10,
+          maghrib: prefs.iqamah_maghrib ?? 5,
+          isha: prefs.iqamah_isha ?? 10,
+        })
+      }
 
       const { data: todayData } = await supabase
         .from('prayer_records')
@@ -283,7 +320,23 @@ export default function Dashboard() {
   const openModal = (prayerName: string) => {
     setSelectedPrayer(prayerName)
     const existing = records[prayerName]
-    setSelectedStatus(existing?.status || 'on_time')
+    
+    if (existing?.status) {
+      setSelectedStatus(existing.status)
+    } else if (times) {
+      const iqamahTimeStr = applyOffset(times[prayerName as keyof PrayerTimes], iqamahOffsets[prayerName as keyof typeof iqamahOffsets])
+      const [iqH, iqM] = iqamahTimeStr.split(':').map(Number)
+      const currentTime = today.getHours() * 60 + today.getMinutes()
+      
+      if (currentTime > (iqH * 60 + iqM)) {
+        setSelectedStatus('late') 
+      } else {
+        setSelectedStatus('on_time')
+      }
+    } else {
+      setSelectedStatus('on_time')
+    }
+
     setPhotoFile(null) 
     
     if (existing?.prayed_at) {
@@ -365,24 +418,10 @@ export default function Dashboard() {
     await executeSave(prayerName, 'on_time', timeStr, null)
   }
 
-  const handlePressStart = (prayerName: string) => {
-    isLongPress.current = false
-    pressTimer.current = setTimeout(() => {
-      isLongPress.current = true
-      quickLog(prayerName)
-    }, 600)
-  }
-
-  const handlePressEnd = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current)
-  }
-
-  const handleRowClick = (prayerName: string) => {
-    if (isLongPress.current) {
-      isLongPress.current = false
-      return
-    }
-    openModal(prayerName)
+  // Handle Double Click
+  const handleRowDoubleClick = (e: React.MouseEvent, prayerName: string) => {
+    e.preventDefault()
+    if (!records[prayerName]) quickLog(prayerName)
   }
 
   const formatTime = (isoString?: string | null) => {
@@ -395,6 +434,16 @@ export default function Dashboard() {
     const date = new Date()
     date.setHours(hours, minutes)
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  }
+
+  const isJamaatNow = (prayerName: string) => {
+    if (!times) return false
+    const iqamahTimeStr = applyOffset(times[prayerName as keyof PrayerTimes], iqamahOffsets[prayerName as keyof typeof iqamahOffsets])
+    const [iqH, iqM] = iqamahTimeStr.split(':').map(Number)
+    const currentTime = today.getHours() * 60 + today.getMinutes()
+    const iqamahInMinutes = iqH * 60 + iqM
+    
+    return currentTime >= iqamahInMinutes && currentTime <= (iqamahInMinutes + 15)
   }
 
   const getReflectionPrompt = (window: string) => {
@@ -448,17 +497,18 @@ export default function Dashboard() {
                   const record = records[prayer]
                   const status = record?.status || 'empty'
                   const displayTime = formatTime(record?.prayed_at) || (times ? formatScheduledTime(times[prayer as keyof PrayerTimes]) : '--:--')
+                  
+                  const iqamahTime = times ? applyOffset(times[prayer as keyof PrayerTimes], iqamahOffsets[prayer as keyof typeof iqamahOffsets]) : null
+                  const displayIqamah = iqamahTime ? formatScheduledTime(iqamahTime) : null
+                  
                   const isUpNext = prayer === highlightedPrayer && status === 'empty'
+                  const showJamaatBadge = isJamaatNow(prayer)
                   
                   return (
                     <div 
                       key={prayer} 
-                      onMouseDown={() => handlePressStart(prayer)}
-                      onMouseUp={handlePressEnd}
-                      onMouseLeave={handlePressEnd}
-                      onTouchStart={() => handlePressStart(prayer)}
-                      onTouchEnd={handlePressEnd}
-                      onClick={() => handleRowClick(prayer)}
+                      onClick={() => openModal(prayer)}
+                      onDoubleClick={(e) => handleRowDoubleClick(e, prayer)}
                       onContextMenu={(e) => {
                         e.preventDefault()
                         if (!records[prayer]) quickLog(prayer)
@@ -468,10 +518,20 @@ export default function Dashboard() {
                       }`}
                     >
                       <div className="flex justify-between items-start sm:hidden">
-                        <span className={`font-mono text-sm ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
-                          {displayTime}
-                        </span>
-                        {isUpNext ? (
+                        <div className="flex flex-col">
+                          <span className={`font-mono text-sm ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
+                            {displayTime}
+                          </span>
+                          <span className="kicker text-[9px] text-[var(--ink-2)] mt-0.5">
+                            Jamaat: {displayIqamah}
+                          </span>
+                        </div>
+                        
+                        {showJamaatBadge ? (
+                          <span className="kicker text-[10px] text-[var(--paper)] bg-[var(--st-on-time)] px-2 py-0.5 rounded-full animate-pulse">
+                            JAMAAT NOW
+                          </span>
+                        ) : isUpNext ? (
                           <div className="flex flex-col items-end">
                             <span className="kicker text-[10px] text-[var(--accent)] font-bold">UP NEXT</span>
                             <span className="font-mono text-xs text-[var(--accent)] mt-0.5">{countdown}</span>
@@ -491,14 +551,25 @@ export default function Dashboard() {
                       </div>
 
                       <div className="hidden sm:flex ml-auto items-center gap-4 text-right">
-                        <span className={`font-mono text-sm ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
-                          {displayTime}
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className={`font-mono text-sm ${record?.prayed_at ? 'text-[var(--ink)] font-bold' : isUpNext ? 'text-[var(--accent)] font-bold' : 'text-[var(--ink-2)]'}`}>
+                            {displayTime}
+                          </span>
+                          <span className="kicker text-[9px] text-[var(--ink-2)] mt-0.5">
+                            Jamaat: {displayIqamah}
+                          </span>
+                        </div>
+                        
                         {record?.photo_path && (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--st-on-time)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                         )}
-                        {isUpNext ? (
-                          <div className="flex flex-col items-end">
+                        
+                        {showJamaatBadge ? (
+                          <span className="kicker text-[10px] text-[var(--paper)] bg-[var(--st-on-time)] px-2 py-0.5 rounded-full animate-pulse w-24 text-center">
+                            JAMAAT NOW
+                          </span>
+                        ) : isUpNext ? (
+                          <div className="flex flex-col items-end w-24">
                             <span className="kicker text-[10px] text-[var(--accent)] font-bold">UP NEXT</span>
                             <span className="font-mono text-xs text-[var(--accent)]">{countdown}</span>
                           </div>
@@ -517,7 +588,7 @@ export default function Dashboard() {
             )}
 
             <p className="text-center kicker text-[10px] text-[var(--ink-2)] mb-8">
-              Tip: Tap to open details. Press & hold (or right-click) to instantly mark as On Time.
+              Tip: Double-click (or double-tap) to instantly mark as On Time. Single tap for details.
             </p>
 
             {!loading && (
@@ -617,6 +688,11 @@ export default function Dashboard() {
                 <div>
                   <p className="kicker text-[var(--ink-2)] mb-1">LOG PRAYER</p>
                   <h2 className="font-display text-3xl font-normal capitalize">{selectedPrayer}</h2>
+                  {times && (
+                    <p className="text-xs text-[var(--ink-2)] mt-1">
+                      Adhan: {formatScheduledTime(times[selectedPrayer as keyof PrayerTimes])} • Jamaat: {formatScheduledTime(applyOffset(times[selectedPrayer as keyof PrayerTimes], iqamahOffsets[selectedPrayer as keyof typeof iqamahOffsets]))}
+                    </p>
+                  )}
                 </div>
                 <button onClick={() => setSelectedPrayer(null)} className="kicker hover:text-[var(--ink)] text-[var(--ink-2)] bg-[var(--line)]/50 px-3 py-1 rounded-lg">CANCEL</button>
               </div>
